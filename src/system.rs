@@ -14,10 +14,9 @@ const GAMMA: f64 = 0.25;
 const EPSILON: f64 = 0.001;
 const ALPHA: f64 = 5.0;
 const DELTA: f64 = 0.05;
-const ZETA: f64 = 0.001;
 
 // Attempt at a more parrellel compute_derivatives
-pub fn compute_derivatives(y: &State, dy: &mut State, formula: &CNFFormula) -> bool {
+pub fn compute_derivatives(y: &State, dy: &mut State, formula: &CNFFormula, zeta: f64) -> bool {
     let (sats, grs): (Vec<bool>, Vec<Vec<(f64, f64)>>) = formula
         .clauses
         .iter()
@@ -77,20 +76,20 @@ pub fn compute_derivatives(y: &State, dy: &mut State, formula: &CNFFormula) -> b
             .for_each(|(literal, (g_m, r_m))| {
                 // Accumulate variable derivatives
                 dy.v[literal.variable] +=
-                    y.xl[m] * y.xs[m] * g_m + (1.0 + ZETA * y.xl[m]) * (1.0 - y.xs[m]) * r_m;
+                    y.xl[m] * y.xs[m] * g_m + (1.0 + zeta * y.xl[m]) * (1.0 - y.xs[m]) * r_m;
             });
     });
 
     sats.iter().all(|&x| x)
 }
 
-pub fn euler_step(state: &mut State, formula: &CNFFormula, dt: f64) -> bool {
+pub fn euler_step(state: &mut State, formula: &CNFFormula, dt: f64, zeta: f64) -> bool {
     let mut derivatives = State {
         v: Array1::zeros(formula.varnum),
         xs: Array1::zeros(formula.clauses.len()),
         xl: Array1::zeros(formula.clauses.len()),
     };
-    let allsat = compute_derivatives(state, &mut derivatives, formula);
+    let allsat = compute_derivatives(state, &mut derivatives, formula, zeta);
 
     // Update the state based on the derivatives and the step size.
     // We add the derivative times the step size to each value in the state.
@@ -111,17 +110,28 @@ pub fn simulate(
     formula: &CNFFormula,
     dt: Option<f64>,
     steps: Option<usize>,
+    learning_rate: Option<f64>,
 ) -> Vec<bool> {
     let dt = dt.unwrap_or(0.25 * (formula.varnum as f64).powf(-0.13));
+    let zeta = learning_rate.unwrap_or({
+        let clause_to_variable_density = formula.clauses.len() as f64 / formula.varnum as f64;
+        if clause_to_variable_density >= 6.0 {
+            0.1
+        } else if clause_to_variable_density >= 4.9 {
+            0.01
+        } else {
+            0.001
+        }
+    });
 
     // Repeat euler integration.
     if let Some(steps) = steps {
         for _ in 0..steps {
-            euler_step(state, formula, dt);
+            euler_step(state, formula, dt, zeta);
         }
     } else {
         loop {
-            if euler_step(state, formula, dt) {
+            if euler_step(state, formula, dt, zeta) {
                 break;
             }
         }

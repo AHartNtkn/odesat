@@ -34,6 +34,10 @@ pub struct SolveOpts {
     /// Step number
     #[arg(short = 'n', long)]
     pub step_number: Option<usize>,
+
+    /// Learning rate
+    #[arg(short = 'l', long)]
+    pub learning_rate: Option<f64>,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -45,6 +49,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let output_path = &solve_opts.output;
             let step_size = solve_opts.step_size;
             let step_number = solve_opts.step_number;
+            let learning_rate = solve_opts.learning_rate;
 
             println!("Reading CNF formula from file...");
             let cnf_string = fs::read_to_string(input_path)?;
@@ -61,7 +66,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 xs: Array1::zeros(normalized_formula.clauses.len()),
                 xl: Array1::ones(normalized_formula.clauses.len()),
             };
-            let result = simulate(&mut state, &normalized_formula, step_size, step_number);
+            let result = simulate(
+                &mut state,
+                &normalized_formula,
+                step_size,
+                step_number,
+                learning_rate,
+            );
 
             println!("Mapping values...");
             let mapped_values = map_values_by_indices(&var_mapping, &result);
