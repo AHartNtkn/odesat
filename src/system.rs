@@ -82,31 +82,35 @@ pub fn compute_derivatives(y: &State, dy: &mut State, formula: &CNFFormula, zeta
     sats.iter().all(|&x| x)
 }
 
-// compute the absolute difference between each component of the new and current state vectors and check if each is less than a certain tolerance.
-pub fn abs_error_check(test_state: &State, current_state: &State, tolerance: f64) -> bool {
-    let abs_diffs_v = (&test_state.v - &current_state.v).mapv_into(f64::abs);
-    let abs_diffs_xs = (&test_state.xs - &current_state.xs).mapv_into(f64::abs);
-    let abs_diffs_xl = (&test_state.xl - &current_state.xl).mapv_into(f64::abs);
-    abs_diffs_v.iter().all(|&x| x < tolerance)
-        && abs_diffs_xs.iter().all(|&x| x < tolerance)
-        && abs_diffs_xl.iter().all(|&x| x < tolerance)
+pub fn update_state(state: &mut State, derivatives: &State, dt: f64, clause_nums: usize) {
+    state.xs.scaled_add(dt, &derivatives.xs);
+    state.xs.mapv_inplace(|x| x.max(0.0).min(1.0));
+    state.xl.scaled_add(dt, &derivatives.xl);
+    state
+        .xl
+        .mapv_inplace(|x| x.max(1.0).min(1e4 * (clause_nums as f64)));
+    state.v.scaled_add(dt, &derivatives.v);
+    state.v.mapv_inplace(|x| x.max(-1.0).min(1.0));
 }
 
-// compute the relative difference between each component of the new and current state vectors and check if each is less than a certain tolerance.
-pub fn rel_error_check(test_state: &State, current_state: &State, relative_tolerance: f64) -> bool {
-    let relative_diffs_v = (&test_state.v - &current_state.v) / &current_state.v;
-    let abs_relative_diffs_v = relative_diffs_v.mapv_into(f64::abs);
-    let relative_diffs_xs = (&test_state.xs - &current_state.xs) / &current_state.xs;
-    let abs_relative_diffs_xs = relative_diffs_xs.mapv_into(f64::abs);
-    let relative_diffs_xl = (&test_state.xl - &current_state.xl) / &current_state.xl;
-    let abs_relative_diffs_xl = relative_diffs_xl.mapv_into(f64::abs);
-    abs_relative_diffs_v.iter().all(|&x| x < relative_tolerance)
-        && abs_relative_diffs_xs
-            .iter()
-            .all(|&x| x < relative_tolerance)
-        && abs_relative_diffs_xl
-            .iter()
-            .all(|&x| x < relative_tolerance)
+// compute the absolute difference between each component of the new and current state vectors and check if each is less than a certain tolerance.
+pub fn max_error(test_state_1: &State, test_state_2: &State) -> f64 {
+    let abs_diffs_v = (&test_state_1.v - &test_state_2.v)
+        .mapv_into(f64::abs)
+        .iter()
+        .cloned()
+        .fold(f64::NAN, f64::max);
+    let abs_diffs_xs = (&test_state_1.xs - &test_state_2.xs)
+        .mapv_into(f64::abs)
+        .iter()
+        .cloned()
+        .fold(f64::NAN, f64::max);
+    let abs_diffs_xl = (&test_state_1.xl - &test_state_2.xl)
+        .mapv_into(f64::abs)
+        .iter()
+        .cloned()
+        .fold(f64::NAN, f64::max);
+    abs_diffs_v.max(abs_diffs_xs).max(abs_diffs_xl)
 }
 
 pub fn euler_step(
@@ -123,28 +127,31 @@ pub fn euler_step(
     };
     let allsat = compute_derivatives(state, &mut derivatives, formula, zeta);
 
-    // Create a copy of the state to test the step
-    let mut test_state = state.clone();
+    // Run a single full step
+    let mut test_state_1 = state.clone();
+    update_state(&mut test_state_1, &derivatives, *dt, formula.clauses.len());
 
-    // Update the test state based on the derivatives and the step size
-    test_state.xs.scaled_add(*dt, &derivatives.xs);
-    test_state.xs.mapv_inplace(|x| x.max(0.0).min(1.0));
-    test_state.xl.scaled_add(*dt, &derivatives.xl);
-    test_state
-        .xl
-        .mapv_inplace(|x| x.max(1.0).min(1e4 * (formula.clauses.len() as f64)));
-    test_state.v.scaled_add(*dt, &derivatives.v);
-    test_state.v.mapv_inplace(|x| x.max(-1.0).min(1.0));
+    // Run two half-steps
+    let mut test_state_2 = state.clone();
+    update_state(
+        &mut test_state_2,
+        &derivatives,
+        0.5 * *dt,
+        formula.clauses.len(),
+    );
+    derivatives.v = Array1::zeros(formula.varnum);
+    compute_derivatives(&test_state_2, &mut derivatives, formula, zeta);
+    update_state(
+        &mut test_state_2,
+        &derivatives,
+        0.5 * *dt,
+        formula.clauses.len(),
+    );
 
-    // If the test state is not satisfactory, decrease dt and try again
-    if !abs_error_check(&test_state, state, tolerance) && *dt >= 2f64.powf(-7.0) {
-        *dt *= 0.5;
-        return false;
-    }
+    let error = max_error(&test_state_1, &test_state_2);
+    *dt *= (tolerance / error).sqrt();
 
-    // If the test state is satisfactory, use it to update the actual state and increase dt for next time
-    *state = test_state;
-    if *dt <= 10f64.powf(3f64) { *dt *= 1.1; }
+    *state = test_state_2;
 
     allsat
 }
