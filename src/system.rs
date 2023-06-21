@@ -137,14 +137,14 @@ pub fn euler_step(
     test_state.v.mapv_inplace(|x| x.max(-1.0).min(1.0));
 
     // If the test state is not satisfactory, decrease dt and try again
-    if !abs_error_check(&test_state, state, tolerance) {
+    if !abs_error_check(&test_state, state, tolerance) && *dt >= 2f64.powf(-7.0) {
         *dt *= 0.5;
         return false;
     }
 
     // If the test state is satisfactory, use it to update the actual state and increase dt for next time
     *state = test_state;
-    *dt *= 1.1;
+    if *dt <= 10f64.powf(3f64) { *dt *= 1.1; }
 
     allsat
 }
