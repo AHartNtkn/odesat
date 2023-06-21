@@ -1,6 +1,4 @@
 use std::collections::{HashMap, HashSet};
-use std::fs;
-use std::io;
 
 pub struct Literal {
     pub variable: usize,  // The identifier of a variable.
