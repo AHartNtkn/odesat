@@ -132,26 +132,41 @@ pub fn euler_step(
     update_state(&mut test_state_1, &derivatives, *dt, formula.clauses.len());
 
     // Run two half-steps
-    let mut test_state_2 = state.clone();
     update_state(
-        &mut test_state_2,
+        state,
         &derivatives,
         0.5 * *dt,
         formula.clauses.len(),
     );
     derivatives.v = Array1::zeros(formula.varnum);
-    compute_derivatives(&test_state_2, &mut derivatives, formula, zeta);
+    compute_derivatives(&state, &mut derivatives, formula, zeta);
     update_state(
-        &mut test_state_2,
+        state,
         &derivatives,
         0.5 * *dt,
         formula.clauses.len(),
     );
 
-    let error = max_error(&test_state_1, &test_state_2);
-    *dt *= (tolerance / error).sqrt();
+    let error = max_error(&test_state_1, &state);
+    *dt = (*dt * (tolerance / error).sqrt()).max(1e3).min(2f64.powf(-7f64));
 
-    *state = test_state_2;
+    allsat
+}
+
+pub fn euler_step_fixed(
+    state: &mut State,
+    formula: &CNFFormula,
+    dt: f64,
+    zeta: f64,
+) -> bool {
+    let mut derivatives = State {
+        v: Array1::zeros(formula.varnum),
+        xs: Array1::zeros(formula.clauses.len()),
+        xl: Array1::zeros(formula.clauses.len()),
+    };
+    let allsat = compute_derivatives(state, &mut derivatives, formula, zeta);
+
+    update_state(state, &derivatives, dt, formula.clauses.len());
 
     allsat
 }
@@ -160,6 +175,7 @@ pub fn simulate(
     state: &mut State,
     formula: &CNFFormula,
     tolerance: Option<f64>,
+    step_size: Option<f64>,
     steps: Option<usize>,
     learning_rate: Option<f64>,
 ) -> Vec<bool> {
@@ -176,15 +192,30 @@ pub fn simulate(
     let tolerance = tolerance.unwrap_or(1e-3);
 
     // Repeat euler integration.
-    let mut dt = 0.01;
-    if let Some(steps) = steps {
-        for _ in 0..steps {
-            euler_step(state, formula, tolerance, &mut dt, zeta);
+    if let Some(step_size) = step_size {
+        if let Some(steps) = steps {
+            for _ in 0..steps {
+                euler_step_fixed(state, formula, step_size, zeta);
+            }
+        } else {
+            loop {
+                if euler_step_fixed(state, formula, step_size, zeta) {
+                    break;
+                }
+            }
         }
+
     } else {
-        loop {
-            if euler_step(state, formula, tolerance, &mut dt, zeta) {
-                break;
+        let mut dt = 0.01;
+        if let Some(steps) = steps {
+            for _ in 0..steps {
+                euler_step(state, formula, tolerance, &mut dt, zeta);
+            }
+        } else {
+            loop {
+                if euler_step(state, formula, tolerance, &mut dt, zeta) {
+                    break;
+                }
             }
         }
     }
@@ -192,3 +223,4 @@ pub fn simulate(
     // Return boolean solution vector by mapping values above 0 to true, and false otherwise
     state.v.iter().map(|&value| value > 0.0).collect()
 }
+
