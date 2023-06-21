@@ -18,3 +18,9 @@ Optionally, it accepts a `-n` argument for a fixed step number and a `-t` float 
 ```
 cargo run solve -f tests/easy.cnf -n 1000 -t 0.001 -o tests/out
 ```
+
+One can also run in batch mode. And, instead of specifying a tolerance for the adaptive step size, one can specify a fixed step size. For example;
+
+```
+cargo run batch -f tests/easy.cnf -n 1000 -b 100 -s 0.01 -o tests/out
+```
