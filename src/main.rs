@@ -27,9 +27,9 @@ pub struct SolveOpts {
     #[arg(short = 'o', long)]
     pub output: Option<PathBuf>,
 
-    /// Step size
-    #[arg(short = 's', long)]
-    pub step_size: Option<f64>,
+    /// Error tolerance
+    #[arg(short = 't', long)]
+    pub tolerance: Option<f64>,
 
     /// Step number
     #[arg(short = 'n', long)]
@@ -47,7 +47,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Command::Solve(solve_opts) => {
             let input_path = &solve_opts.input;
             let output_path = &solve_opts.output;
-            let step_size = solve_opts.step_size;
+            let tolerance = solve_opts.tolerance;
             let step_number = solve_opts.step_number;
             let learning_rate = solve_opts.learning_rate;
 
@@ -69,7 +69,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let result = simulate(
                 &mut state,
                 &normalized_formula,
-                step_size,
+                tolerance,
                 step_number,
                 learning_rate,
             );

@@ -1,6 +1,4 @@
 use std::collections::{HashMap, HashSet};
-use std::fs;
-use std::io;
 
 pub struct Literal {
     pub variable: usize,  // The identifier of a variable.
@@ -215,21 +213,6 @@ pub fn cnf_to_dimacs_format(formula: &CNFFormula) -> String {
     }
 
     dimacs_string
-}
-
-pub fn import_and_normalize_cnf(
-    file_path: &str,
-) -> io::Result<(CNFFormula, HashMap<usize, usize>)> {
-    // Read the file contents
-    let cnf_string = fs::read_to_string(file_path)?;
-
-    // Parse the CNF using parse_dimacs_format
-    let formula = parse_dimacs_format(&cnf_string);
-
-    // Normalize the formula
-    let (var_mapping, normalized_formula) = normalize_cnf_variables(&formula);
-
-    Ok((normalized_formula, var_mapping))
 }
 
 pub fn evaluate_cnf(variables: &HashMap<usize, bool>, formula: &CNFFormula) -> bool {

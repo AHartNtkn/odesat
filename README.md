@@ -13,8 +13,8 @@ cargo run solve -f tests/easy.cnf -o tests/out
 
 Will solve the cnf problem in `tests/easy.cnf` and, if it finds a solution, that solution will be stored in `tests/out`.
 
-Optionally, it accepts a `-n` argument for a fixed step number and a `-s` float for a fixed step size. For example;
+Optionally, it accepts a `-n` argument for a fixed step number and a `-t` float for an error tolerance (smaller means less tolerance). For example;
 
 ```
-cargo run solve -f tests/easy.cnf -n 1000 -s 0.001 -o tests/out
+cargo run solve -f tests/easy.cnf -n 1000 -t 0.001 -o tests/out
 ```

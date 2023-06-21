@@ -1,8 +1,7 @@
 use crate::cnf::CNFFormula;
 use ndarray::prelude::*;
 
-//use rayon::prelude::*;
-
+#[derive(Debug, Clone, Default)]
 pub struct State {
     pub v: Array1<f64>,  // Variable values
     pub xs: Array1<f64>, // Short term memory
@@ -83,7 +82,44 @@ pub fn compute_derivatives(y: &State, dy: &mut State, formula: &CNFFormula, zeta
     sats.iter().all(|&x| x)
 }
 
-pub fn euler_step(state: &mut State, formula: &CNFFormula, dt: f64, zeta: f64) -> bool {
+pub fn update_state(state: &mut State, derivatives: &State, dt: f64, clause_nums: usize) {
+    state.xs.scaled_add(dt, &derivatives.xs);
+    state.xs.mapv_inplace(|x| x.max(0.0).min(1.0));
+    state.xl.scaled_add(dt, &derivatives.xl);
+    state
+        .xl
+        .mapv_inplace(|x| x.max(1.0).min(1e4 * (clause_nums as f64)));
+    state.v.scaled_add(dt, &derivatives.v);
+    state.v.mapv_inplace(|x| x.max(-1.0).min(1.0));
+}
+
+// compute the absolute difference between each component of the new and current state vectors and check if each is less than a certain tolerance.
+pub fn max_error(test_state_1: &State, test_state_2: &State) -> f64 {
+    let abs_diffs_v = (&test_state_1.v - &test_state_2.v)
+        .mapv_into(f64::abs)
+        .iter()
+        .cloned()
+        .fold(f64::NAN, f64::max);
+    let abs_diffs_xs = (&test_state_1.xs - &test_state_2.xs)
+        .mapv_into(f64::abs)
+        .iter()
+        .cloned()
+        .fold(f64::NAN, f64::max);
+    let abs_diffs_xl = (&test_state_1.xl - &test_state_2.xl)
+        .mapv_into(f64::abs)
+        .iter()
+        .cloned()
+        .fold(f64::NAN, f64::max);
+    abs_diffs_v.max(abs_diffs_xs).max(abs_diffs_xl)
+}
+
+pub fn euler_step(
+    state: &mut State,
+    formula: &CNFFormula,
+    tolerance: f64,
+    dt: &mut f64,
+    zeta: f64,
+) -> bool {
     let mut derivatives = State {
         v: Array1::zeros(formula.varnum),
         xs: Array1::zeros(formula.clauses.len()),
@@ -91,16 +127,31 @@ pub fn euler_step(state: &mut State, formula: &CNFFormula, dt: f64, zeta: f64) -
     };
     let allsat = compute_derivatives(state, &mut derivatives, formula, zeta);
 
-    // Update the state based on the derivatives and the step size.
-    // We add the derivative times the step size to each value in the state.
-    state.xs.scaled_add(dt, &derivatives.xs);
-    state.xs.mapv_inplace(|x| x.max(0.0).min(1.0));
-    state.xl.scaled_add(dt, &derivatives.xl);
-    state
-        .xl
-        .mapv_inplace(|x| x.max(1.0).min(1e4 * (formula.clauses.len() as f64)));
-    state.v.scaled_add(dt, &derivatives.v);
-    state.v.mapv_inplace(|x| x.max(-1.0).min(1.0));
+    // Run a single full step
+    let mut test_state_1 = state.clone();
+    update_state(&mut test_state_1, &derivatives, *dt, formula.clauses.len());
+
+    // Run two half-steps
+    let mut test_state_2 = state.clone();
+    update_state(
+        &mut test_state_2,
+        &derivatives,
+        0.5 * *dt,
+        formula.clauses.len(),
+    );
+    derivatives.v = Array1::zeros(formula.varnum);
+    compute_derivatives(&test_state_2, &mut derivatives, formula, zeta);
+    update_state(
+        &mut test_state_2,
+        &derivatives,
+        0.5 * *dt,
+        formula.clauses.len(),
+    );
+
+    let error = max_error(&test_state_1, &test_state_2);
+    *dt *= (tolerance / error).sqrt();
+
+    *state = test_state_2;
 
     allsat
 }
@@ -108,11 +159,10 @@ pub fn euler_step(state: &mut State, formula: &CNFFormula, dt: f64, zeta: f64) -
 pub fn simulate(
     state: &mut State,
     formula: &CNFFormula,
-    dt: Option<f64>,
+    tolerance: Option<f64>,
     steps: Option<usize>,
     learning_rate: Option<f64>,
 ) -> Vec<bool> {
-    let dt = dt.unwrap_or(0.25 * (formula.varnum as f64).powf(-0.13));
     let zeta = learning_rate.unwrap_or({
         let clause_to_variable_density = formula.clauses.len() as f64 / formula.varnum as f64;
         if clause_to_variable_density >= 6.0 {
@@ -123,20 +173,22 @@ pub fn simulate(
             0.001
         }
     });
+    let tolerance = tolerance.unwrap_or(1e-3);
 
     // Repeat euler integration.
+    let mut dt = 0.01;
     if let Some(steps) = steps {
         for _ in 0..steps {
-            euler_step(state, formula, dt, zeta);
+            euler_step(state, formula, tolerance, &mut dt, zeta);
         }
     } else {
         loop {
-            if euler_step(state, formula, dt, zeta) {
+            if euler_step(state, formula, tolerance, &mut dt, zeta) {
                 break;
             }
         }
     }
 
-    // Return boolean solution vector by maping values above 0 to true, and false otherwise
+    // Return boolean solution vector by mapping values above 0 to true, and false otherwise
     state.v.iter().map(|&value| value > 0.0).collect()
 }
