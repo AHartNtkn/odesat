@@ -93,7 +93,7 @@ pub fn update_state(state: &mut State, derivatives: &State, dt: f64, clause_nums
     state.v.mapv_inplace(|x| x.max(-1.0).min(1.0));
 }
 
-// compute the absolute difference between each component of the new and current state vectors and check if each is less than a certain tolerance.
+// compute the max absolute difference between each component of the two state vectors.
 pub fn max_error(test_state_1: &State, test_state_2: &State) -> f64 {
     let abs_diffs_v = (&test_state_1.v - &test_state_2.v)
         .mapv_into(f64::abs)
