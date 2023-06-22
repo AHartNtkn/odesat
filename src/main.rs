@@ -5,6 +5,7 @@ use odesat::system::*;
 use rand::Rng;
 use std::collections::HashMap;
 use std::fs;
+use std::io::{self, Write};
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -156,7 +157,8 @@ fn batch(batch_opts: BatchOpts) -> Result<(), Box<dyn std::error::Error>> {
     let mut mapped_values = HashMap::new();
 
     for i in 0..batch_size {
-        println!("Running simulation {i}.");
+        print!("\rRunning simulation {}.", i + 1);
+        io::stdout().flush().unwrap(); // Flush stdout to make sure it gets printed immediately
 
         // Initialize the state
         let mut state = State {
