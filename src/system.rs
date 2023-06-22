@@ -14,9 +14,8 @@ const EPSILON: f64 = 0.001;
 const ALPHA: f64 = 5.0;
 const DELTA: f64 = 0.05;
 
-// Attempt at a more parrellel compute_derivatives
 pub fn compute_derivatives(y: &State, dy: &mut State, formula: &CNFFormula, zeta: f64) -> bool {
-    let (sats, grs): (Vec<bool>, Vec<Vec<(f64, f64)>>) = formula
+    formula
         .clauses
         .iter()
         .enumerate()
@@ -37,49 +36,36 @@ pub fn compute_derivatives(y: &State, dy: &mut State, formula: &CNFFormula, zeta
             // Is the clause satisfied?
             let sat = c_m < 0.5;
 
-            let grs: Vec<(f64, f64)> = vsat
-                .iter()
-                .map(|(i, _, q_i)| {
-                    // the gradient term for clause m and variable i.
-                    let g_m_i = 0.5
-                        * q_i
-                        * vsat
-                            .iter()
-                            .filter(|l| l.0 != *i)
-                            .map(|x| x.1)
-                            .fold(f64::INFINITY, f64::min);
+            vsat.iter().for_each(|(i, _, q_i)| {
+                // the gradient term for clause m and variable i.
+                let g_m_i = 0.5
+                    * q_i
+                    * vsat
+                        .iter()
+                        .filter(|l| l.0 != *i)
+                        .map(|x| x.1)
+                        .fold(f64::INFINITY, f64::min);
 
-                    // the rigidity term for clause m and variable i.
-                    let r_m_i = if c_m == (1.0 - q_i * y.v[*i]) {
-                        0.5 * (q_i - y.v[*i])
-                    } else {
-                        0.0
-                    };
+                // the rigidity term for clause m and variable i.
+                let r_m_i = if c_m == (1.0 - q_i * y.v[*i]) {
+                    0.5 * (q_i - y.v[*i])
+                } else {
+                    0.0
+                };
 
-                    (g_m_i, r_m_i)
-                })
-                .collect();
+                // Accumulate the derivative of v_i from clause m
+                dy.v[*i] +=
+                    y.xl[m] * y.xs[m] * g_m_i + (1.0 + zeta * y.xl[m]) * (1.0 - y.xs[m]) * r_m_i
+            });
 
             // Compute the derivatives for the memories
             dy.xs[m] = BETA * (y.xs[m] + EPSILON) * (c_m - GAMMA);
             dy.xl[m] = ALPHA * (c_m - DELTA);
-            (sat, grs)
+            sat
         })
-        .unzip();
-
-    formula.clauses.iter().enumerate().for_each(|(m, clause)| {
-        clause
-            .literals
-            .iter()
-            .zip(grs[m].iter())
-            .for_each(|(literal, (g_m, r_m))| {
-                // Accumulate variable derivatives
-                dy.v[literal.variable] +=
-                    y.xl[m] * y.xs[m] * g_m + (1.0 + zeta * y.xl[m]) * (1.0 - y.xs[m]) * r_m;
-            });
-    });
-
-    sats.iter().all(|&x| x)
+        .collect::<Vec<bool>>()
+        .iter()
+        .all(|&x| x)
 }
 
 pub fn update_state(state: &mut State, derivatives: &State, dt: f64, clause_nums: usize) {
@@ -133,22 +119,12 @@ pub fn euler_step(
         update_state(&mut test_state_1, &derivatives, *dt, formula.clauses.len());
 
         // Run two half-steps
-        update_state(
-            state,
-            &derivatives,
-            0.5 * *dt,
-            formula.clauses.len(),
-        );
+        update_state(state, &derivatives, 0.5 * *dt, formula.clauses.len());
         derivatives.v = Array1::zeros(formula.varnum);
-        compute_derivatives(&state, &mut derivatives, formula, zeta);
-        update_state(
-            state,
-            &derivatives,
-            0.5 * *dt,
-            formula.clauses.len(),
-        );
+        compute_derivatives(state, &mut derivatives, formula, zeta);
+        update_state(state, &derivatives, 0.5 * *dt, formula.clauses.len());
 
-        let error = max_error(&test_state_1, &state);
+        let error = max_error(&test_state_1, state);
         *dt = (*dt * (tolerance / error).sqrt())
             .min(1e3)
             .max(2f64.powf(-7f64));
@@ -194,7 +170,7 @@ pub fn simulate(
     if let Some(step_size) = step_size {
         if let Some(steps) = steps {
             for _ in 0..steps {
-                if euler_step_fixed(state, formula, step_size, zeta){
+                if euler_step_fixed(state, formula, step_size, zeta) {
                     break;
                 }
             }
