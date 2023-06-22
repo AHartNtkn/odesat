@@ -127,20 +127,32 @@ pub fn euler_step(
     };
     let allsat = compute_derivatives(state, &mut derivatives, formula, zeta);
 
-    // Run a single full step
-    let mut test_state_1 = state.clone();
-    update_state(&mut test_state_1, &derivatives, *dt, formula.clauses.len());
+    if !allsat {
+        // Run a single full step
+        let mut test_state_1 = state.clone();
+        update_state(&mut test_state_1, &derivatives, *dt, formula.clauses.len());
 
-    // Run two half-steps
-    update_state(state, &derivatives, 0.5 * *dt, formula.clauses.len());
-    derivatives.v = Array1::zeros(formula.varnum);
-    compute_derivatives(state, &mut derivatives, formula, zeta);
-    update_state(state, &derivatives, 0.5 * *dt, formula.clauses.len());
+        // Run two half-steps
+        update_state(
+            state,
+            &derivatives,
+            0.5 * *dt,
+            formula.clauses.len(),
+        );
+        derivatives.v = Array1::zeros(formula.varnum);
+        compute_derivatives(&state, &mut derivatives, formula, zeta);
+        update_state(
+            state,
+            &derivatives,
+            0.5 * *dt,
+            formula.clauses.len(),
+        );
 
-    let error = max_error(&test_state_1, state);
-    *dt = (*dt * (tolerance / error).sqrt())
-        .min(1e3)
-        .max(2f64.powf(-7f64));
+        let error = max_error(&test_state_1, &state);
+        *dt = (*dt * (tolerance / error).sqrt())
+            .min(1e3)
+            .max(2f64.powf(-7f64));
+    }
 
     allsat
 }
@@ -182,7 +194,9 @@ pub fn simulate(
     if let Some(step_size) = step_size {
         if let Some(steps) = steps {
             for _ in 0..steps {
-                euler_step_fixed(state, formula, step_size, zeta);
+                if euler_step_fixed(state, formula, step_size, zeta){
+                    break;
+                }
             }
         } else {
             loop {
@@ -195,7 +209,9 @@ pub fn simulate(
         let mut dt = 0.01;
         if let Some(steps) = steps {
             for _ in 0..steps {
-                euler_step(state, formula, tolerance, &mut dt, zeta);
+                if euler_step(state, formula, tolerance, &mut dt, zeta) {
+                    break;
+                }
             }
         } else {
             loop {
