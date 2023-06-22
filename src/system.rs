@@ -149,18 +149,15 @@ pub fn euler_step(
         );
 
         let error = max_error(&test_state_1, &state);
-        *dt = (*dt * (tolerance / error).sqrt()).max(1e3).min(2f64.powf(-7f64));    
+        *dt = (*dt * (tolerance / error).sqrt())
+            .min(1e3)
+            .max(2f64.powf(-7f64));
     }
 
     allsat
 }
 
-pub fn euler_step_fixed(
-    state: &mut State,
-    formula: &CNFFormula,
-    dt: f64,
-    zeta: f64,
-) -> bool {
+pub fn euler_step_fixed(state: &mut State, formula: &CNFFormula, dt: f64, zeta: f64) -> bool {
     let mut derivatives = State {
         v: Array1::zeros(formula.varnum),
         xs: Array1::zeros(formula.clauses.len()),
@@ -208,7 +205,6 @@ pub fn simulate(
                 }
             }
         }
-
     } else {
         let mut dt = 0.01;
         if let Some(steps) = steps {
@@ -229,4 +225,3 @@ pub fn simulate(
     // Return boolean solution vector by mapping values above 0 to true, and false otherwise
     state.v.iter().map(|&value| value > 0.0).collect()
 }
-
