@@ -204,7 +204,9 @@ pub fn simulate(
 
 // The initial short term memories; values if all variables are 0.
 pub fn init_short_term_memory(formula: &CNFFormula) -> Array1<f64> {
-    let clause_values: Vec<f64> = formula.clauses.iter()
+    let clause_values: Vec<f64> = formula
+        .clauses
+        .iter()
         .map(|clause| {
             if clause.literals.iter().any(|literal| literal.is_negated) {
                 1.0
@@ -213,6 +215,6 @@ pub fn init_short_term_memory(formula: &CNFFormula) -> Array1<f64> {
             }
         })
         .collect();
-    
+
     Array1::from(clause_values)
 }

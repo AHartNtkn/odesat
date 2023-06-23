@@ -99,9 +99,7 @@ fn solve(solve_opts: SolveOpts) -> Result<(), Box<dyn std::error::Error>> {
     println!("Simulating...");
     let mut rng = rand::thread_rng();
     let mut state = State {
-        v: Array1::from_iter(
-            (0..normalized_formula.varnum).map(|_| rng.gen::<f64>() * 2.0 - 1.0),
-        ),
+        v: Array1::from_iter((0..normalized_formula.varnum).map(|_| rng.gen::<f64>() * 2.0 - 1.0)),
         xs: init_short_term_memory(&formula),
         xl: Array1::ones(normalized_formula.clauses.len()),
     };
