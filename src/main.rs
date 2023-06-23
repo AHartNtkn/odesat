@@ -190,7 +190,7 @@ fn batch(batch_opts: BatchOpts) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    println!("Checking if solution vector satisfies formula: {is_satisfiable}");
+    println!("\nChecking if solution vector satisfies formula: {is_satisfiable}");
 
     println!("Rendering variable assignments...");
     let render_str = render_variable_map(&mapped_values);
