@@ -8,11 +8,11 @@ pub struct State {
     pub xl: Array1<f64>, // Long term memory
 }
 
+const ALPHA: f64 = 5.0;
 const BETA: f64 = 20.0;
 const GAMMA: f64 = 0.25;
-const EPSILON: f64 = 0.001;
-const ALPHA: f64 = 5.0;
 const DELTA: f64 = 0.05;
+const EPSILON: f64 = 0.001;
 
 pub fn compute_derivatives(y: &State, dy: &mut State, formula: &CNFFormula, zeta: f64) -> bool {
     formula
@@ -33,8 +33,6 @@ pub fn compute_derivatives(y: &State, dy: &mut State, formula: &CNFFormula, zeta
 
             // The degree to which the clause is satisfied.
             let c_m = 0.5 * vsat.iter().map(|x| x.1).fold(f64::INFINITY, f64::min);
-            // Is the clause satisfied?
-            let sat = c_m < 0.5;
 
             vsat.iter().for_each(|(i, _, q_i)| {
                 // the gradient term for clause m and variable i.
@@ -61,7 +59,9 @@ pub fn compute_derivatives(y: &State, dy: &mut State, formula: &CNFFormula, zeta
             // Compute the derivatives for the memories
             dy.xs[m] = BETA * (y.xs[m] + EPSILON) * (c_m - GAMMA);
             dy.xl[m] = ALPHA * (c_m - DELTA);
-            sat
+
+            // Is the clause satisfied?
+            c_m < 0.5
         })
         .collect::<Vec<bool>>()
         .iter()
@@ -70,7 +70,7 @@ pub fn compute_derivatives(y: &State, dy: &mut State, formula: &CNFFormula, zeta
 
 pub fn update_state(state: &mut State, derivatives: &State, dt: f64, clause_nums: usize) {
     state.xs.scaled_add(dt, &derivatives.xs);
-    state.xs.mapv_inplace(|x| x.max(0.0).min(1.0));
+    state.xs.mapv_inplace(|x| x.max(EPSILON).min(1.0 - EPSILON));
     state.xl.scaled_add(dt, &derivatives.xl);
     state
         .xl
@@ -200,4 +200,19 @@ pub fn simulate(
 
     // Return boolean solution vector by mapping values above 0 to true, and false otherwise
     state.v.iter().map(|&value| value > 0.0).collect()
+}
+
+// The initial short term memories; values if all variables are 0.
+pub fn init_short_term_memory(formula: &CNFFormula) -> Array1<f64> {
+    let clause_values: Vec<f64> = formula.clauses.iter()
+        .map(|clause| {
+            if clause.literals.iter().any(|literal| literal.is_negated) {
+                1.0
+            } else {
+                -1.0
+            }
+        })
+        .collect();
+    
+    Array1::from(clause_values)
 }

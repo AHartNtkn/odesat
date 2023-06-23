@@ -97,11 +97,15 @@ fn solve(solve_opts: SolveOpts) -> Result<(), Box<dyn std::error::Error>> {
     let (var_mapping, normalized_formula) = normalize_cnf_variables(&formula);
 
     println!("Simulating...");
+    let mut rng = rand::thread_rng();
     let mut state = State {
-        v: Array1::zeros(normalized_formula.varnum),
-        xs: Array1::zeros(normalized_formula.clauses.len()),
+        v: Array1::from_iter(
+            (0..normalized_formula.varnum).map(|_| rng.gen::<f64>() * 2.0 - 1.0),
+        ),
+        xs: init_short_term_memory(&formula),
         xl: Array1::ones(normalized_formula.clauses.len()),
     };
+
     let result = simulate(
         &mut state,
         &normalized_formula,
@@ -165,7 +169,7 @@ fn batch(batch_opts: BatchOpts) -> Result<(), Box<dyn std::error::Error>> {
             v: Array1::from_iter(
                 (0..normalized_formula.varnum).map(|_| rng.gen::<f64>() * 2.0 - 1.0),
             ),
-            xs: Array1::zeros(normalized_formula.clauses.len()),
+            xs: init_short_term_memory(&formula),
             xl: Array1::ones(normalized_formula.clauses.len()),
         };
 
