@@ -18,12 +18,12 @@ pub fn compute_derivatives(y: &State, dy: &mut State, formula: &CNFFormula, zeta
     // Reset variable derivative
     dy.v = Array1::zeros(formula.varnum);
 
-    let (sats, dmem): (Vec<bool>, Vec<(f64, f64)>) = formula
+    let intermediates: Array1<(bool, f64, f64)> = formula
         .clauses
         .iter()
         .zip(y.xs.iter())
         .zip(y.xl.iter())
-        .map(|((clause, xs_m), xl_m)| {
+        .map(|((clause, &xs_m), &xl_m)| {
             // Stores the degree that each variable satisfies the clause.
             let vsat: Vec<(usize, f64, f64)> = clause
                 .literals
@@ -66,15 +66,14 @@ pub fn compute_derivatives(y: &State, dy: &mut State, formula: &CNFFormula, zeta
             // Is the clause satisfied?
             let sat = c_m < 0.5;
 
-            (sat, (dxs, dxl))
+            (sat, dxs, dxl)
         })
-        .unzip();
+        .collect();
 
-    let (dxs, dxl): (Vec<f64>, Vec<f64>) = dmem.into_iter().unzip();
-    dy.xs = Array1::from(dxs);
-    dy.xl = Array1::from(dxl);
+    dy.xs = intermediates.map(|&x| x.1);
+    dy.xl = intermediates.map(|&x| x.2);
 
-    sats.iter().all(|&x| x)
+    intermediates.iter().all(|&x| x.0)
 }
 
 pub fn update_state(state: &mut State, derivatives: &State, dt: f64, clause_nums: usize) {
