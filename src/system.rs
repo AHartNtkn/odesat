@@ -104,7 +104,7 @@ pub fn max_error(test_state_1: &State, test_state_2: &State) -> f64 {
 
 pub fn euler_step(
     state: &mut State,
-    derivatives: &mut State, 
+    derivatives: &mut State,
     formula: &CNFFormula,
     tolerance: f64,
     dt: &mut f64,
@@ -115,12 +115,12 @@ pub fn euler_step(
     if !allsat {
         // Run a single full step
         let mut test_state_1 = state.clone();
-        update_state(&mut test_state_1, &derivatives, *dt, formula.clauses.len());
+        update_state(&mut test_state_1, derivatives, *dt, formula.clauses.len());
 
         // Run two half-steps
-        update_state(state, &derivatives, 0.5 * *dt, formula.clauses.len());
+        update_state(state, derivatives, 0.5 * *dt, formula.clauses.len());
         compute_derivatives(state, derivatives, formula, zeta);
-        update_state(state, &derivatives, 0.5 * *dt, formula.clauses.len());
+        update_state(state, derivatives, 0.5 * *dt, formula.clauses.len());
 
         let error = max_error(&test_state_1, state);
         *dt = (*dt * (tolerance / error).sqrt())
@@ -131,10 +131,16 @@ pub fn euler_step(
     allsat
 }
 
-pub fn euler_step_fixed(state: &mut State, derivatives: &mut State, formula: &CNFFormula, dt: f64, zeta: f64) -> bool {
+pub fn euler_step_fixed(
+    state: &mut State,
+    derivatives: &mut State,
+    formula: &CNFFormula,
+    dt: f64,
+    zeta: f64,
+) -> bool {
     let allsat = compute_derivatives(state, derivatives, formula, zeta);
 
-    update_state(state, &derivatives, dt, formula.clauses.len());
+    update_state(state, derivatives, dt, formula.clauses.len());
 
     allsat
 }
@@ -160,7 +166,11 @@ pub fn simulate(
     let tolerance = tolerance.unwrap_or(1e-3);
 
     // Initialize derivatives
-    let mut derivatives = State::default();
+    let mut derivatives = State {
+        v: Array1::zeros(formula.varnum),
+        xs: Array1::zeros(formula.clauses.len()),
+        xl: Array1::zeros(formula.clauses.len()),
+    };
 
     // Repeat euler integration.
     if let Some(step_size) = step_size {
