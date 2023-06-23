@@ -1,5 +1,6 @@
 use crate::cnf::CNFFormula;
 use ndarray::prelude::*;
+use ndarray::Zip;
 
 #[derive(Debug, Clone, Default)]
 pub struct State {
@@ -16,29 +17,28 @@ const EPSILON: f64 = 0.001;
 
 pub fn compute_derivatives(y: &State, dy: &mut State, formula: &CNFFormula, zeta: f64) -> bool {
     // Reset variable derivative
-    dy.v = Array1::zeros(formula.varnum);
+    dy.v.fill(0.0);
 
-    let intermediates: Array1<(bool, f64, f64)> = formula
+    formula
         .clauses
         .iter()
         .zip(y.xs.iter())
         .zip(y.xl.iter())
-        .map(|((clause, &xs_m), &xl_m)| {
+        .enumerate()
+        .map(|(index, ((clause, &xs_m), &xl_m))| {
             // Stores the degree that each variable satisfies the clause.
-            let vsat: Vec<(usize, f64, f64)> = clause
+            let vsat: Array1<(usize, f64, f64)> = Array1::from_iter(clause
                 .literals
-                .iter()
                 .map(|l| {
                     let q_i = if l.is_negated { -1.0 } else { 1.0 };
                     let v_i = y.v[l.variable];
                     (l.variable, 1.0 - q_i * v_i, q_i)
-                })
-                .collect();
+                }));
 
             // The degree to which the clause is satisfied.
             let c_m = 0.5 * vsat.iter().map(|x| x.1).fold(f64::INFINITY, f64::min);
 
-            vsat.iter().for_each(|(i, _, q_i)| {
+            vsat.for_each(|(i, _, q_i)| {
                 // the gradient term for clause m and variable i.
                 let g_m_i = 0.5
                     * q_i
@@ -66,45 +66,46 @@ pub fn compute_derivatives(y: &State, dy: &mut State, formula: &CNFFormula, zeta
             // Is the clause satisfied?
             let sat = c_m < 0.5;
 
-            (sat, dxs, dxl)
-        })
-        .collect();
+            dy.xs[index] = dxs;
+            dy.xl[index] = dxl;
 
-    dy.xs = intermediates.map(|&x| x.1);
-    dy.xl = intermediates.map(|&x| x.2);
-
-    intermediates.iter().all(|&x| x.0)
+            sat
+        }).all(|x| x)
 }
 
-pub fn update_state(state: &mut State, derivatives: &State, dt: f64, clause_nums: usize) {
-    state.xs.scaled_add(dt, &derivatives.xs);
-    state.xs.mapv_inplace(|x| x.max(EPSILON).min(1.0 - EPSILON));
-    state.xl.scaled_add(dt, &derivatives.xl);
-    state
-        .xl
-        .mapv_inplace(|x| x.max(1.0).min(1e4 * (clause_nums as f64)));
-    state.v.scaled_add(dt, &derivatives.v);
-    state.v.mapv_inplace(|x| x.max(-1.0).min(1.0));
+pub fn update_state(state: &mut State, derivatives: &State, dt: f64, clause_nums: usize) {   
+    Zip::from(&mut state.xs)
+        .and(&derivatives.xs)
+        .for_each(|xs, dxs| {
+            *xs = (*xs + dt * dxs).max(EPSILON).min(1.0 - EPSILON);
+        });
+    
+    Zip::from(&mut state.xl)
+        .and(&derivatives.xl)
+        .for_each(|xl, dxl| {
+            *xl = (*xl + dt * dxl).max(1.0).min(1e4 * (clause_nums as f64));
+        });
+    
+    Zip::from(&mut state.v)
+        .and(&derivatives.v)
+        .for_each(|v, dv| {
+            *v = (*v + dt * dv).max(-1.0).min(1.0);
+        });
 }
 
 // compute the max absolute difference between each component of the two state vectors.
+#[inline]
 pub fn max_error(test_state_1: &State, test_state_2: &State) -> f64 {
     let abs_diffs_v = (&test_state_1.v - &test_state_2.v)
-        .mapv_into(f64::abs)
-        .iter()
-        .cloned()
-        .fold(f64::NAN, f64::max);
+        .mapv(f64::abs)
+        .fold(f64::NAN, |x, &y| f64::max(x, y));
     let abs_diffs_xs = (&test_state_1.xs - &test_state_2.xs)
-        .mapv_into(f64::abs)
-        .iter()
-        .cloned()
-        .fold(f64::NAN, f64::max);
+        .mapv(f64::abs)
+        .fold(f64::NAN, |x, &y| f64::max(x, y));
     let abs_diffs_xl = (&test_state_1.xl - &test_state_2.xl)
-        .mapv_into(f64::abs)
-        .iter()
-        .cloned()
-        .fold(f64::NAN, f64::max);
-    abs_diffs_v.max(abs_diffs_xs).max(abs_diffs_xl)
+        .mapv(f64::abs)
+        .fold(f64::NAN, |x, &y| f64::max(x, y));
+    f64::max(abs_diffs_v, f64::max(abs_diffs_xs, abs_diffs_xl))
 }
 
 pub fn euler_step(
@@ -215,7 +216,7 @@ pub fn simulate(
 
 // The initial short term memories; values if all variables are 0.
 pub fn init_short_term_memory(formula: &CNFFormula) -> Array1<f64> {
-    let clause_values: Vec<f64> = formula
+    let clause_values = formula
         .clauses
         .iter()
         .map(|clause| {
@@ -224,8 +225,7 @@ pub fn init_short_term_memory(formula: &CNFFormula) -> Array1<f64> {
             } else {
                 -1.0
             }
-        })
-        .collect();
+        });
 
-    Array1::from(clause_values)
+    Array1::from_iter(clause_values)
 }
