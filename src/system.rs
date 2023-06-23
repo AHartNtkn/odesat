@@ -18,11 +18,12 @@ pub fn compute_derivatives(y: &State, dy: &mut State, formula: &CNFFormula, zeta
     // Reset variable derivative
     dy.v = Array1::zeros(formula.varnum);
 
-    formula
+    let (sats, dmem): (Vec<bool>, Vec<(f64, f64)>) = formula
         .clauses
         .iter()
-        .enumerate()
-        .map(|(m, clause)| {
+        .zip(y.xs.iter())
+        .zip(y.xl.iter())
+        .map(|((clause, xs_m), xl_m)| {
             // Stores the degree that each variable satisfies the clause.
             let vsat: Vec<(usize, f64, f64)> = clause
                 .literals
@@ -55,20 +56,25 @@ pub fn compute_derivatives(y: &State, dy: &mut State, formula: &CNFFormula, zeta
                 };
 
                 // Accumulate the derivative of v_i from clause m
-                dy.v[*i] +=
-                    y.xl[m] * y.xs[m] * g_m_i + (1.0 + zeta * y.xl[m]) * (1.0 - y.xs[m]) * r_m_i
+                dy.v[*i] += xl_m * xs_m * g_m_i + (1.0 + zeta * xl_m) * (1.0 - xs_m) * r_m_i
             });
 
             // Compute the derivatives for the memories
-            dy.xs[m] = BETA * (y.xs[m] + EPSILON) * (c_m - GAMMA);
-            dy.xl[m] = ALPHA * (c_m - DELTA);
+            let dxs = BETA * (xs_m + EPSILON) * (c_m - GAMMA);
+            let dxl = ALPHA * (c_m - DELTA);
 
             // Is the clause satisfied?
-            c_m < 0.5
+            let sat = c_m < 0.5;
+
+            (sat, (dxs, dxl))
         })
-        .collect::<Vec<bool>>()
-        .iter()
-        .all(|&x| x)
+        .unzip();
+
+    let (dxs, dxl): (Vec<f64>, Vec<f64>) = dmem.into_iter().unzip();
+    dy.xs = Array1::from(dxs);
+    dy.xl = Array1::from(dxl);
+
+    sats.iter().all(|&x| x)
 }
 
 pub fn update_state(state: &mut State, derivatives: &State, dt: f64, clause_nums: usize) {
