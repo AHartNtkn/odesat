@@ -45,7 +45,6 @@ pub fn adaptive_benchmark(c: &mut Criterion) {
                 None,
                 Some(10000),
                 None,
-                false,
             )
         })
     });
@@ -74,7 +73,6 @@ pub fn fixed_benchmark(c: &mut Criterion) {
                 Some(0.01),
                 Some(10000),
                 None,
-                false,
             )
         })
     });

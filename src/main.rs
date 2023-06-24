@@ -46,10 +46,6 @@ pub struct SolveOpts {
     /// Learning rate
     #[arg(short = 'l', long)]
     pub learning_rate: Option<f64>,
-
-    /// Magic bit.
-    #[clap(short = 'm', long, default_value = "false")]
-    pub magic: bool,
 }
 
 #[derive(Args)]
@@ -81,10 +77,6 @@ pub struct BatchOpts {
     /// Learning rate
     #[arg(short = 'l', long)]
     pub learning_rate: Option<f64>,
-
-    /// Magic bit.
-    #[clap(short = 'm', long, default_value = "false")]
-    pub magic: bool,
 }
 
 fn solve(solve_opts: SolveOpts) -> Result<(), Box<dyn std::error::Error>> {
@@ -94,7 +86,6 @@ fn solve(solve_opts: SolveOpts) -> Result<(), Box<dyn std::error::Error>> {
     let step_number = solve_opts.step_number;
     let step_size = solve_opts.step_size;
     let learning_rate = solve_opts.learning_rate;
-    let magic = solve_opts.magic;
 
     println!("Reading CNF formula from file...");
     let cnf_string = fs::read_to_string(input_path)?;
@@ -120,7 +111,6 @@ fn solve(solve_opts: SolveOpts) -> Result<(), Box<dyn std::error::Error>> {
         step_size,
         step_number,
         learning_rate,
-        magic,
     );
 
     println!("Mapping values...");
@@ -152,7 +142,6 @@ fn batch(batch_opts: BatchOpts) -> Result<(), Box<dyn std::error::Error>> {
     let step_number = batch_opts.step_number;
     let step_size = batch_opts.step_size;
     let learning_rate = batch_opts.learning_rate;
-    let magic = batch_opts.magic;
 
     println!("Reading CNF formula from file...");
     let cnf_string = fs::read_to_string(input_path)?;
@@ -190,7 +179,6 @@ fn batch(batch_opts: BatchOpts) -> Result<(), Box<dyn std::error::Error>> {
             step_size,
             Some(step_number),
             learning_rate,
-            magic,
         );
 
         // Map values and check if the formula is satisfiable

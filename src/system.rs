@@ -15,17 +15,11 @@ const GAMMA: f64 = 0.25;
 const DELTA: f64 = 0.05;
 const EPSILON: f64 = 0.001;
 
-pub fn compute_derivatives(
-    y: &State,
-    dy: &mut State,
-    formula: &CNFFormula,
-    zeta: f64,
-    magic: bool,
-) -> bool {
+pub fn compute_derivatives(y: &State, dy: &mut State, formula: &CNFFormula, zeta: f64) -> bool {
     // Reset variable derivative
     dy.v.fill(0.0);
 
-    let mut sats = formula
+    formula
         .clauses
         .iter()
         .zip(y.xs.iter())
@@ -33,11 +27,11 @@ pub fn compute_derivatives(
         .enumerate()
         .map(|(index, ((clause, &xs_m), &xl_m))| {
             // Stores the degree that each variable satisfies the clause.
-            let vsat: Array1<(usize, f64, f64)> = Array1::from_iter(clause.literals.map(|l| {
+            let vsat = clause.literals.map(|l| {
                 let q_i = if l.is_negated { -1.0 } else { 1.0 };
                 let v_i = y.v[l.variable];
                 (l.variable, 1.0 - q_i * v_i, q_i)
-            }));
+            });
 
             // The degree to which the clause is satisfied.
             let c_m = 0.5 * vsat.iter().map(|x| x.1).fold(f64::INFINITY, f64::min);
@@ -46,11 +40,9 @@ pub fn compute_derivatives(
                 // the gradient term for clause m and variable i.
                 let g_m_i = 0.5
                     * q_i
-                    * vsat
-                        .iter()
-                        .filter(|l| l.0 != *i)
-                        .map(|x| x.1)
-                        .fold(f64::INFINITY, f64::min);
+                    * vsat.fold(f64::INFINITY, |acc, (j, vsat_value, _)| {
+                        acc.min(if j != i { f64::INFINITY } else { *vsat_value })
+                    });
 
                 // the rigidity term for clause m and variable i.
                 let r_m_i = if c_m == (1.0 - q_i * y.v[*i]) {
@@ -64,31 +56,16 @@ pub fn compute_derivatives(
             });
 
             // Compute the derivatives for the memories
-            let dxs = BETA * (xs_m + EPSILON) * (c_m - GAMMA);
-            let dxl = ALPHA * (c_m - DELTA);
+            dy.xs[index] = BETA * (xs_m + EPSILON) * (c_m - GAMMA);
+            dy.xl[index] = ALPHA * (c_m - DELTA);
 
             // Is the clause satisfied?
-            let sat = c_m < 0.5;
-
-            dy.xs[index] = dxs;
-            dy.xl[index] = dxl;
-
-            sat
-        });
-
-    // I don't understand what's going on here.
-    // This, for some reason, has a huge effect on what problems can and can't be solved.
-
-    // Example, if magic is false, then `aim-50-1_6-yes1-1.cnf` is trivially solvable, but
-    //          if magic is true, then it becomes completely unsolvable.
-    // By contrast, if magic is false `blocksworld/medium.cnf` becomes compltely unsolvable
-    //              if magic is true, it becomes trivially solvable.
-    // Seems like magic.
-    if magic {
-        sats.collect::<Vec<bool>>().iter().all(|&x| x)
-    } else {
-        sats.all(|x| x)
-    }
+            c_m < 0.5
+        })
+        // Note, collect is important here since it forces full evaluate; laziness breaks this
+        .collect::<Vec<bool>>()
+        .iter()
+        .all(|&x| x)
 }
 
 pub fn update_state(state: &mut State, derivatives: &State, dt: f64, clause_nums: usize) {
@@ -133,9 +110,8 @@ pub fn euler_step(
     tolerance: f64,
     dt: &mut f64,
     zeta: f64,
-    magic: bool,
 ) -> bool {
-    let allsat = compute_derivatives(state, derivatives, formula, zeta, magic);
+    let allsat = compute_derivatives(state, derivatives, formula, zeta);
 
     if !allsat {
         // Run a single full step
@@ -144,7 +120,7 @@ pub fn euler_step(
 
         // Run two half-steps
         update_state(state, derivatives, 0.5 * *dt, formula.clauses.len());
-        compute_derivatives(state, derivatives, formula, zeta, magic);
+        compute_derivatives(state, derivatives, formula, zeta);
         update_state(state, derivatives, 0.5 * *dt, formula.clauses.len());
 
         let error = max_error(&test_state_1, state);
@@ -162,9 +138,8 @@ pub fn euler_step_fixed(
     formula: &CNFFormula,
     dt: f64,
     zeta: f64,
-    magic: bool,
 ) -> bool {
-    let allsat = compute_derivatives(state, derivatives, formula, zeta, magic);
+    let allsat = compute_derivatives(state, derivatives, formula, zeta);
 
     update_state(state, derivatives, dt, formula.clauses.len());
 
@@ -178,7 +153,6 @@ pub fn simulate(
     step_size: Option<f64>,
     steps: Option<usize>,
     learning_rate: Option<f64>,
-    magic: bool,
 ) -> Vec<bool> {
     let zeta = learning_rate.unwrap_or({
         let clause_to_variable_density = formula.clauses.len() as f64 / formula.varnum as f64;
@@ -203,13 +177,13 @@ pub fn simulate(
     if let Some(step_size) = step_size {
         if let Some(steps) = steps {
             for _ in 0..steps {
-                if euler_step_fixed(state, &mut derivatives, formula, step_size, zeta, magic) {
+                if euler_step_fixed(state, &mut derivatives, formula, step_size, zeta) {
                     break;
                 }
             }
         } else {
             loop {
-                if euler_step_fixed(state, &mut derivatives, formula, step_size, zeta, magic) {
+                if euler_step_fixed(state, &mut derivatives, formula, step_size, zeta) {
                     break;
                 }
             }
@@ -218,29 +192,13 @@ pub fn simulate(
         let mut dt = 0.01;
         if let Some(steps) = steps {
             for _ in 0..steps {
-                if euler_step(
-                    state,
-                    &mut derivatives,
-                    formula,
-                    tolerance,
-                    &mut dt,
-                    zeta,
-                    magic,
-                ) {
+                if euler_step(state, &mut derivatives, formula, tolerance, &mut dt, zeta) {
                     break;
                 }
             }
         } else {
             loop {
-                if euler_step(
-                    state,
-                    &mut derivatives,
-                    formula,
-                    tolerance,
-                    &mut dt,
-                    zeta,
-                    magic,
-                ) {
+                if euler_step(state, &mut derivatives, formula, tolerance, &mut dt, zeta) {
                     break;
                 }
             }
