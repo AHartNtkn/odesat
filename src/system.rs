@@ -19,14 +19,12 @@ pub fn compute_derivatives(y: &State, dy: &mut State, formula: &CNFFormula, zeta
     // Reset variable derivative
     dy.v.fill(0.0);
 
-    let mut allsat = true;
-
     Zip::from(&formula.clauses)
         .and(&y.xs)
         .and(&y.xl)
         .and(&mut dy.xs)
         .and(&mut dy.xl)
-        .for_each(|clause, xs_m, xl_m, dxs_m, dxl_m| {
+        .map_collect(|clause, xs_m, xl_m, dxs_m, dxl_m| {
             // Stores the degree that each variable satisfies the clause.
             let vsat = clause.literals.map(|l| {
                 let q_i = if l.is_negated { -1.0 } else { 1.0 };
@@ -64,44 +62,26 @@ pub fn compute_derivatives(y: &State, dy: &mut State, formula: &CNFFormula, zeta
             *dxl_m = ALPHA * (c_m - DELTA);
 
             // Is the clause satisfied?
-            allsat = allsat && c_m < 0.5
-        });
-
-    allsat
+            c_m < 0.5
+        })
+        .fold(true, |acc, x| acc && *x)
 }
 
 pub fn update_state(state: &mut State, derivatives: &State, dt: f64, clause_nums: usize) {
-    Zip::from(&mut state.xs)
-        .and(&derivatives.xs)
-        .for_each(|xs, dxs| {
-            *xs = (*xs + dt * dxs).max(EPSILON).min(1.0 - EPSILON);
-        });
-
-    Zip::from(&mut state.xl)
-        .and(&derivatives.xl)
-        .for_each(|xl, dxl| {
-            *xl = (*xl + dt * dxl).max(1.0).min(1e4 * (clause_nums as f64));
-        });
-
-    Zip::from(&mut state.v)
-        .and(&derivatives.v)
-        .for_each(|v, dv| {
-            *v = (*v + dt * dv).max(-1.0).min(1.0);
-        });
+    azip!((xs in &mut state.xs, &dxs in &derivatives.xs) *xs = (*xs + dt * dxs).max(EPSILON).min(1.0 - EPSILON));
+    azip!((xl in &mut state.xl, &dxl in &derivatives.xl) *xl = (*xl + dt * dxl).max(1.0).min(1e4 * (clause_nums as f64)));
+    azip!((v in &mut state.v, &dv in &derivatives.v) *v = (*v + dt * dv).max(-1.0).min(1.0));
 }
 
 // compute the max absolute difference between each component of the two state vectors.
 #[inline]
 pub fn max_error(test_state_1: &State, test_state_2: &State) -> f64 {
     let abs_diffs_v = (&test_state_1.v - &test_state_2.v)
-        .mapv(f64::abs)
-        .fold(f64::NAN, |x, &y| f64::max(x, y));
+        .fold(f64::NAN, |x, &y| f64::max(x, y.abs()));
     let abs_diffs_xs = (&test_state_1.xs - &test_state_2.xs)
-        .mapv(f64::abs)
-        .fold(f64::NAN, |x, &y| f64::max(x, y));
+        .fold(f64::NAN, |x, &y| f64::max(x, y.abs()));
     let abs_diffs_xl = (&test_state_1.xl - &test_state_2.xl)
-        .mapv(f64::abs)
-        .fold(f64::NAN, |x, &y| f64::max(x, y));
+        .fold(f64::NAN, |x, &y| f64::max(x, y.abs()));
     f64::max(abs_diffs_v, f64::max(abs_diffs_xs, abs_diffs_xl))
 }
 
