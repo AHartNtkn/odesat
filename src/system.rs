@@ -238,6 +238,127 @@ pub fn simulate(
     state.v.iter().map(|&value| value > 0.0).collect()
 }
 
+pub fn simulate_inter(
+    states: &mut Vec<State>,
+    formula: &CNFFormula,
+    tolerance: Option<f64>,
+    step_size: Option<f64>,
+    steps: Option<usize>,
+    learning_rate: Option<f64>,
+) -> Vec<bool> {
+    let zeta = learning_rate.unwrap_or({
+        let clause_to_variable_density = formula.clauses.len() as f64 / formula.varnum as f64;
+        if clause_to_variable_density >= 6.0 {
+            0.1
+        } else if clause_to_variable_density >= 4.9 {
+            0.01
+        } else {
+            0.001
+        }
+    });
+    let tolerance = tolerance.unwrap_or(1e-3);
+
+    // Initialize derivatives
+    let mut derivatives = State {
+        v: Array1::zeros(formula.varnum),
+        xs: Array1::zeros(formula.clauses.len()),
+        xl: Array1::zeros(formula.clauses.len()),
+    };
+
+    let mut slab: SlabState = SlabState {
+        slab: Slab::with_capacity(10),
+        min: f64::INFINITY,
+        second_min: f64::INFINITY,
+    };
+
+    let mut state_res: Vec<bool> = vec![true; states.len()];
+
+    // Repeat euler integration.
+    if let Some(step_size) = step_size {
+        if let Some(steps) = steps {
+            for _ in 0..steps {
+                for idx in 0..states.len() {
+                    state_res[idx] = euler_step_fixed(
+                        &mut states[idx],
+                        &mut derivatives,
+                        formula,
+                        step_size,
+                        zeta,
+                        &mut slab,
+                    )
+                }
+
+                if state_res.iter().any(|&x| x) {
+                    break;
+                }
+            }
+        } else {
+            loop {
+                for idx in 0..states.len() {
+                    state_res[idx] = euler_step_fixed(
+                        &mut states[idx],
+                        &mut derivatives,
+                        formula,
+                        step_size,
+                        zeta,
+                        &mut slab,
+                    )
+                }
+
+                if state_res.iter().any(|&x| x) {
+                    break;
+                }
+            }
+        }
+    } else {
+        let mut dt = 0.01;
+        if let Some(steps) = steps {
+            for _ in 0..steps {
+                for idx in 0..states.len() {
+                    state_res[idx] = euler_step(
+                        &mut states[idx],
+                        &mut derivatives,
+                        formula,
+                        tolerance,
+                        &mut dt,
+                        zeta,
+                        &mut slab,
+                    )
+                }
+
+                if state_res.iter().any(|&x| x) {
+                    break;
+                }
+            }
+        } else {
+            loop {
+                for idx in 0..states.len() {
+                    state_res[idx] = euler_step(
+                        &mut states[idx],
+                        &mut derivatives,
+                        formula,
+                        tolerance,
+                        &mut dt,
+                        zeta,
+                        &mut slab,
+                    )
+                }
+                if state_res.iter().any(|&x| x) {
+                    break;
+                }
+            }
+        }
+    }
+
+    if let Some(sat_idx) = state_res.iter().position(|&x| x) {
+        // Return boolean solution vector by mapping values above 0 to true, and false otherwise
+        states[sat_idx].v.iter().map(|&value| value > 0.0).collect()
+    } else {
+        states[0].v.iter().map(|&value| value > 0.0).collect()
+    }
+
+}
+
 // The initial short term memories; values if all variables are 0.
 pub fn init_short_term_memory(formula: &CNFFormula) -> Array1<f64> {
     let clause_values = formula.clauses.iter().map(|clause| {
