@@ -19,6 +19,7 @@ struct Opts {
 pub enum Command {
     Solve(SolveOpts),
     Batch(BatchOpts),
+    Inter(InterhOpts),
 }
 
 #[derive(Args)]
@@ -65,6 +66,37 @@ pub struct BatchOpts {
     /// Step number
     #[arg(short = 'n', long)]
     pub step_number: usize,
+
+    /// Step size (overrides tolerance)
+    #[arg(short = 's', long)]
+    pub step_size: Option<f64>,
+
+    /// Batch size
+    #[arg(short = 'b', long)]
+    pub batch_size: usize,
+
+    /// Learning rate
+    #[arg(short = 'l', long)]
+    pub learning_rate: Option<f64>,
+}
+
+#[derive(Args)]
+pub struct InterhOpts {
+    /// Input file containing the CNF formula
+    #[arg(short = 'f', long)]
+    pub input: PathBuf,
+
+    /// Optional output file
+    #[arg(short = 'o', long)]
+    pub output: Option<PathBuf>,
+
+    /// Error tolerance
+    #[arg(short = 't', long)]
+    pub tolerance: Option<f64>,
+
+    /// Step number
+    #[arg(short = 'n', long)]
+    pub step_number: Option<usize>,
 
     /// Step size (overrides tolerance)
     #[arg(short = 's', long)]
@@ -205,11 +237,75 @@ fn batch(batch_opts: BatchOpts) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+// Batch run many, initializing them all at once and interlacing their execution.
+fn inter(batch_opts: InterhOpts) -> Result<(), Box<dyn std::error::Error>> {
+    let input_path = &batch_opts.input;
+    let output_path = &batch_opts.output;
+    let tolerance = batch_opts.tolerance;
+    let batch_size = batch_opts.batch_size;
+    let step_number = batch_opts.step_number;
+    let step_size = batch_opts.step_size;
+    let learning_rate = batch_opts.learning_rate;
+
+    println!("Reading CNF formula from file...");
+    let cnf_string = fs::read_to_string(input_path)?;
+
+    println!("Parsing CNF formula...");
+    let formula = parse_dimacs_format(&cnf_string);
+
+    println!("Normalizing CNF formula...");
+    let (var_mapping, normalized_formula) = normalize_cnf_variables(&formula);
+
+    println!("Simulating...");
+
+    let mut rng = rand::thread_rng();
+
+    let mut states = vec![];
+    
+    for _ in 0..batch_size {
+        states.push( State {
+            v: Array1::from_iter(
+                (0..normalized_formula.varnum).map(|_| rng.gen::<f64>() * 2.0 - 1.0),
+            ),
+            xs: init_short_term_memory(&formula),
+            xl: Array1::ones(normalized_formula.clauses.len()),
+        })
+    }
+
+    let result = simulate_inter(
+        &mut states,
+        &normalized_formula,
+        tolerance,
+        step_size,
+        step_number,
+        learning_rate,
+    );
+
+    // Map values and check if the formula is satisfiable
+    let mapped_values = map_values_by_indices(&var_mapping, &result);
+    let is_satisfiable = evaluate_cnf(&mapped_values, &formula);
+
+    println!("\nChecking if solution vector satisfies formula: {is_satisfiable}");
+
+    println!("Rendering variable assignments...");
+    let render_str = render_variable_map(&mapped_values);
+
+    if let Some(output_path) = output_path {
+        println!("Writing results to file...");
+        fs::write(output_path, render_str)?;
+    } else {
+        println!("Variable assignments:\n{render_str}");
+    }
+
+    Ok(())
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let opts: Opts = Opts::parse();
 
     match opts.cmd {
         Command::Solve(solve_opts) => solve(solve_opts),
         Command::Batch(batch_opts) => batch(batch_opts),
+        Command::Inter(inter_opts) => inter(inter_opts),
     }
 }
