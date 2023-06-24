@@ -9,6 +9,7 @@ edition = "2021"
 clap = { version = "4.3.4", features = ["derive"]}
 ndarray = { version = "0.15.6", features = ["rayon"] }
 rand = "0.8.5"
+slab = "0.4.8"
 
 [dev-dependencies]
 criterion = "0.3"
