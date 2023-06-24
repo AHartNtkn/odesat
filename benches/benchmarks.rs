@@ -25,7 +25,7 @@ pub fn error_benchmark(c: &mut Criterion) {
 pub fn adaptive_benchmark(c: &mut Criterion) {
     let cnf_string = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/", "hard.cnf"));
 
-    let formula = parse_dimacs_format(&cnf_string);
+    let formula = parse_dimacs_format(cnf_string);
     let (_, normalized_formula) = normalize_cnf_variables(&formula);
 
     let mut rng = rand::thread_rng();
@@ -45,6 +45,7 @@ pub fn adaptive_benchmark(c: &mut Criterion) {
                 None,
                 Some(10000),
                 None,
+                false,
             )
         })
     });
@@ -53,7 +54,7 @@ pub fn adaptive_benchmark(c: &mut Criterion) {
 pub fn fixed_benchmark(c: &mut Criterion) {
     let cnf_string = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/", "hard.cnf"));
 
-    let formula = parse_dimacs_format(&cnf_string);
+    let formula = parse_dimacs_format(cnf_string);
     let (_, normalized_formula) = normalize_cnf_variables(&formula);
 
     let mut rng = rand::thread_rng();
@@ -73,6 +74,7 @@ pub fn fixed_benchmark(c: &mut Criterion) {
                 Some(0.01),
                 Some(10000),
                 None,
+                false,
             )
         })
     });

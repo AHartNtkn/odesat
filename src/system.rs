@@ -15,11 +15,17 @@ const GAMMA: f64 = 0.25;
 const DELTA: f64 = 0.05;
 const EPSILON: f64 = 0.001;
 
-pub fn compute_derivatives(y: &State, dy: &mut State, formula: &CNFFormula, zeta: f64) -> bool {
+pub fn compute_derivatives(
+    y: &State,
+    dy: &mut State,
+    formula: &CNFFormula,
+    zeta: f64,
+    magic: bool,
+) -> bool {
     // Reset variable derivative
     dy.v.fill(0.0);
 
-    formula
+    let mut sats = formula
         .clauses
         .iter()
         .zip(y.xs.iter())
@@ -27,13 +33,11 @@ pub fn compute_derivatives(y: &State, dy: &mut State, formula: &CNFFormula, zeta
         .enumerate()
         .map(|(index, ((clause, &xs_m), &xl_m))| {
             // Stores the degree that each variable satisfies the clause.
-            let vsat: Array1<(usize, f64, f64)> = Array1::from_iter(clause
-                .literals
-                .map(|l| {
-                    let q_i = if l.is_negated { -1.0 } else { 1.0 };
-                    let v_i = y.v[l.variable];
-                    (l.variable, 1.0 - q_i * v_i, q_i)
-                }));
+            let vsat: Array1<(usize, f64, f64)> = Array1::from_iter(clause.literals.map(|l| {
+                let q_i = if l.is_negated { -1.0 } else { 1.0 };
+                let v_i = y.v[l.variable];
+                (l.variable, 1.0 - q_i * v_i, q_i)
+            }));
 
             // The degree to which the clause is satisfied.
             let c_m = 0.5 * vsat.iter().map(|x| x.1).fold(f64::INFINITY, f64::min);
@@ -70,22 +74,36 @@ pub fn compute_derivatives(y: &State, dy: &mut State, formula: &CNFFormula, zeta
             dy.xl[index] = dxl;
 
             sat
-        }).all(|x| x)
+        });
+
+    // I don't understand what's going on here.
+    // This, for some reason, has a huge effect on what problems can and can't be solved.
+
+    // Example, if magic is false, then `aim-50-1_6-yes1-1.cnf` is trivially solvable, but
+    //          if magic is true, then it becomes completely unsolvable.
+    // By contrast, if magic is false `blocksworld/medium.cnf` becomes compltely unsolvable
+    //              if magic is true, it becomes trivially solvable.
+    // Seems like magic.
+    if magic {
+        sats.collect::<Vec<bool>>().iter().all(|&x| x)
+    } else {
+        sats.all(|x| x)
+    }
 }
 
-pub fn update_state(state: &mut State, derivatives: &State, dt: f64, clause_nums: usize) {   
+pub fn update_state(state: &mut State, derivatives: &State, dt: f64, clause_nums: usize) {
     Zip::from(&mut state.xs)
         .and(&derivatives.xs)
         .for_each(|xs, dxs| {
             *xs = (*xs + dt * dxs).max(EPSILON).min(1.0 - EPSILON);
         });
-    
+
     Zip::from(&mut state.xl)
         .and(&derivatives.xl)
         .for_each(|xl, dxl| {
             *xl = (*xl + dt * dxl).max(1.0).min(1e4 * (clause_nums as f64));
         });
-    
+
     Zip::from(&mut state.v)
         .and(&derivatives.v)
         .for_each(|v, dv| {
@@ -115,8 +133,9 @@ pub fn euler_step(
     tolerance: f64,
     dt: &mut f64,
     zeta: f64,
+    magic: bool,
 ) -> bool {
-    let allsat = compute_derivatives(state, derivatives, formula, zeta);
+    let allsat = compute_derivatives(state, derivatives, formula, zeta, magic);
 
     if !allsat {
         // Run a single full step
@@ -125,7 +144,7 @@ pub fn euler_step(
 
         // Run two half-steps
         update_state(state, derivatives, 0.5 * *dt, formula.clauses.len());
-        compute_derivatives(state, derivatives, formula, zeta);
+        compute_derivatives(state, derivatives, formula, zeta, magic);
         update_state(state, derivatives, 0.5 * *dt, formula.clauses.len());
 
         let error = max_error(&test_state_1, state);
@@ -143,8 +162,9 @@ pub fn euler_step_fixed(
     formula: &CNFFormula,
     dt: f64,
     zeta: f64,
+    magic: bool,
 ) -> bool {
-    let allsat = compute_derivatives(state, derivatives, formula, zeta);
+    let allsat = compute_derivatives(state, derivatives, formula, zeta, magic);
 
     update_state(state, derivatives, dt, formula.clauses.len());
 
@@ -158,6 +178,7 @@ pub fn simulate(
     step_size: Option<f64>,
     steps: Option<usize>,
     learning_rate: Option<f64>,
+    magic: bool,
 ) -> Vec<bool> {
     let zeta = learning_rate.unwrap_or({
         let clause_to_variable_density = formula.clauses.len() as f64 / formula.varnum as f64;
@@ -182,13 +203,13 @@ pub fn simulate(
     if let Some(step_size) = step_size {
         if let Some(steps) = steps {
             for _ in 0..steps {
-                if euler_step_fixed(state, &mut derivatives, formula, step_size, zeta) {
+                if euler_step_fixed(state, &mut derivatives, formula, step_size, zeta, magic) {
                     break;
                 }
             }
         } else {
             loop {
-                if euler_step_fixed(state, &mut derivatives, formula, step_size, zeta) {
+                if euler_step_fixed(state, &mut derivatives, formula, step_size, zeta, magic) {
                     break;
                 }
             }
@@ -197,13 +218,29 @@ pub fn simulate(
         let mut dt = 0.01;
         if let Some(steps) = steps {
             for _ in 0..steps {
-                if euler_step(state, &mut derivatives, formula, tolerance, &mut dt, zeta) {
+                if euler_step(
+                    state,
+                    &mut derivatives,
+                    formula,
+                    tolerance,
+                    &mut dt,
+                    zeta,
+                    magic,
+                ) {
                     break;
                 }
             }
         } else {
             loop {
-                if euler_step(state, &mut derivatives, formula, tolerance, &mut dt, zeta) {
+                if euler_step(
+                    state,
+                    &mut derivatives,
+                    formula,
+                    tolerance,
+                    &mut dt,
+                    zeta,
+                    magic,
+                ) {
                     break;
                 }
             }
@@ -216,16 +253,13 @@ pub fn simulate(
 
 // The initial short term memories; values if all variables are 0.
 pub fn init_short_term_memory(formula: &CNFFormula) -> Array1<f64> {
-    let clause_values = formula
-        .clauses
-        .iter()
-        .map(|clause| {
-            if clause.literals.iter().any(|literal| literal.is_negated) {
-                1.0
-            } else {
-                -1.0
-            }
-        });
+    let clause_values = formula.clauses.iter().map(|clause| {
+        if clause.literals.iter().any(|literal| literal.is_negated) {
+            1.0
+        } else {
+            -1.0
+        }
+    });
 
     Array1::from_iter(clause_values)
 }

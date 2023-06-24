@@ -1,5 +1,5 @@
-use std::collections::{HashMap, HashSet};
 use ndarray::prelude::*;
+use std::collections::{HashMap, HashSet};
 
 pub struct Literal {
     pub variable: usize,  // The identifier of a variable.
