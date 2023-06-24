@@ -1,6 +1,7 @@
 use crate::cnf::CNFFormula;
 use ndarray::prelude::*;
 use ndarray::Zip;
+use slab::Slab;
 
 #[derive(Debug, Clone, Default)]
 pub struct State {
@@ -15,7 +16,13 @@ const GAMMA: f64 = 0.25;
 const DELTA: f64 = 0.05;
 const EPSILON: f64 = 0.001;
 
-pub fn compute_derivatives(y: &State, dy: &mut State, formula: &CNFFormula, zeta: f64) -> bool {
+pub fn compute_derivatives(
+    y: &State,
+    dy: &mut State,
+    formula: &CNFFormula,
+    zeta: f64,
+    slab: &mut Slab<(usize, f64, f64)>,
+) -> bool {
     // Reset variable derivative
     dy.v.fill(0.0);
 
@@ -24,38 +31,40 @@ pub fn compute_derivatives(y: &State, dy: &mut State, formula: &CNFFormula, zeta
         .and(&y.xl)
         .and(&mut dy.xs)
         .and(&mut dy.xl)
-        .map_collect(|clause, xs_m, xl_m, dxs_m, dxl_m| {
+        .map_collect(|clause, &xs_m, &xl_m, dxs_m, dxl_m| {
             // Stores the degree that each variable satisfies the clause.
-            let vsat = clause.literals.map(|l| {
+            slab.clear();
+            for l in clause.literals.iter() {
                 let q_i = if l.is_negated { -1.0 } else { 1.0 };
                 let v_i = y.v[l.variable];
-                (l.variable, 1.0 - q_i * v_i, q_i)
-            });
+                slab.insert((l.variable, 1.0 - q_i * v_i, q_i));
+            }
 
             // The degree to which the clause is satisfied.
             let c_m = 0.5
-                * vsat.fold(f64::INFINITY, |acc, (_, vsat_value, _)| {
+                * slab.iter().fold(f64::INFINITY, |acc, (_, (_, vsat_value, _))| {
                     acc.min(*vsat_value)
                 });
 
-            vsat.for_each(|(i, _, q_i)| {
+            for (_, (i, _, q_i)) in slab.iter() {
                 // the gradient term for clause m and variable i.
-                let g_m_i = 0.5
-                    * q_i
-                    * vsat.fold(f64::INFINITY, |acc, (j, vsat_value, _)| {
+                let g_m_i: f64 = 0.5
+                    * *q_i
+                    * slab.iter().fold(f64::INFINITY, |acc, (_, (j, vsat_value, _))| {
                         acc.min(if j == i { f64::INFINITY } else { *vsat_value })
                     });
 
                 // the rigidity term for clause m and variable i.
-                let r_m_i = if c_m == (1.0 - q_i * y.v[*i]) {
-                    0.5 * (q_i - y.v[*i])
+                let r_m_i = if c_m == (1.0 - *q_i * y.v[*i]) {
+                    0.5 * (*q_i - y.v[*i])
                 } else {
                     0.0
                 };
 
                 // Accumulate the derivative of v_i from clause m
-                dy.v[*i] += xl_m * xs_m * g_m_i + (1.0 + zeta * xl_m) * (1.0 - xs_m) * r_m_i
-            });
+                dy.v[*i] +=
+                    xl_m * xs_m * g_m_i + (1.0 + zeta * xl_m) * (1.0 - xs_m) * r_m_i
+            };
 
             // Compute the derivatives for the memories
             *dxs_m = BETA * (xs_m + EPSILON) * (c_m - GAMMA);
@@ -74,14 +83,14 @@ pub fn update_state(state: &mut State, derivatives: &State, dt: f64, clause_nums
 }
 
 // compute the max absolute difference between each component of the two state vectors.
-#[inline]
+#[inline(always)]
 pub fn max_error(test_state_1: &State, test_state_2: &State) -> f64 {
-    let abs_diffs_v = (&test_state_1.v - &test_state_2.v)
-        .fold(f64::NAN, |x, &y| f64::max(x, y.abs()));
-    let abs_diffs_xs = (&test_state_1.xs - &test_state_2.xs)
-        .fold(f64::NAN, |x, &y| f64::max(x, y.abs()));
-    let abs_diffs_xl = (&test_state_1.xl - &test_state_2.xl)
-        .fold(f64::NAN, |x, &y| f64::max(x, y.abs()));
+    let abs_diffs_v =
+        (&test_state_1.v - &test_state_2.v).fold(f64::NAN, |x, &y| f64::max(x, y.abs()));
+    let abs_diffs_xs =
+        (&test_state_1.xs - &test_state_2.xs).fold(f64::NAN, |x, &y| f64::max(x, y.abs()));
+    let abs_diffs_xl =
+        (&test_state_1.xl - &test_state_2.xl).fold(f64::NAN, |x, &y| f64::max(x, y.abs()));
     f64::max(abs_diffs_v, f64::max(abs_diffs_xs, abs_diffs_xl))
 }
 
@@ -92,8 +101,9 @@ pub fn euler_step(
     tolerance: f64,
     dt: &mut f64,
     zeta: f64,
+    slab: &mut Slab<(usize, f64, f64)>,
 ) -> bool {
-    let allsat = compute_derivatives(state, derivatives, formula, zeta);
+    let allsat = compute_derivatives(state, derivatives, formula, zeta, slab);
 
     if !allsat {
         // Run a single full step
@@ -102,7 +112,7 @@ pub fn euler_step(
 
         // Run two half-steps
         update_state(state, derivatives, 0.5 * *dt, formula.clauses.len());
-        compute_derivatives(state, derivatives, formula, zeta);
+        compute_derivatives(state, derivatives, formula, zeta, slab);
         update_state(state, derivatives, 0.5 * *dt, formula.clauses.len());
 
         let error = max_error(&test_state_1, state);
@@ -120,8 +130,9 @@ pub fn euler_step_fixed(
     formula: &CNFFormula,
     dt: f64,
     zeta: f64,
+    slab: &mut Slab<(usize, f64, f64)>,
 ) -> bool {
-    let allsat = compute_derivatives(state, derivatives, formula, zeta);
+    let allsat = compute_derivatives(state, derivatives, formula, zeta, slab);
 
     update_state(state, derivatives, dt, formula.clauses.len());
 
@@ -155,17 +166,19 @@ pub fn simulate(
         xl: Array1::zeros(formula.clauses.len()),
     };
 
+    let mut slab: Slab<(usize, f64, f64)> = Slab::with_capacity(10);
+
     // Repeat euler integration.
     if let Some(step_size) = step_size {
         if let Some(steps) = steps {
             for _ in 0..steps {
-                if euler_step_fixed(state, &mut derivatives, formula, step_size, zeta) {
+                if euler_step_fixed(state, &mut derivatives, formula, step_size, zeta, &mut slab) {
                     break;
                 }
             }
         } else {
             loop {
-                if euler_step_fixed(state, &mut derivatives, formula, step_size, zeta) {
+                if euler_step_fixed(state, &mut derivatives, formula, step_size, zeta, &mut slab) {
                     break;
                 }
             }
@@ -174,13 +187,29 @@ pub fn simulate(
         let mut dt = 0.01;
         if let Some(steps) = steps {
             for _ in 0..steps {
-                if euler_step(state, &mut derivatives, formula, tolerance, &mut dt, zeta) {
+                if euler_step(
+                    state,
+                    &mut derivatives,
+                    formula,
+                    tolerance,
+                    &mut dt,
+                    zeta,
+                    &mut slab,
+                ) {
                     break;
                 }
             }
         } else {
             loop {
-                if euler_step(state, &mut derivatives, formula, tolerance, &mut dt, zeta) {
+                if euler_step(
+                    state,
+                    &mut derivatives,
+                    formula,
+                    tolerance,
+                    &mut dt,
+                    zeta,
+                    &mut slab,
+                ) {
                     break;
                 }
             }
