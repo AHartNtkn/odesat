@@ -19,13 +19,14 @@ pub fn compute_derivatives(y: &State, dy: &mut State, formula: &CNFFormula, zeta
     // Reset variable derivative
     dy.v.fill(0.0);
 
-    formula
-        .clauses
-        .iter()
-        .zip(y.xs.iter())
-        .zip(y.xl.iter())
-        .enumerate()
-        .map(|(index, ((clause, &xs_m), &xl_m))| {
+    let mut allsat = true;
+
+    Zip::from(&formula.clauses)
+        .and(&y.xs)
+        .and(&y.xl)
+        .and(&mut dy.xs)
+        .and(&mut dy.xl)
+        .for_each(|clause, xs_m, xl_m, dxs_m, dxl_m| {
             // Stores the degree that each variable satisfies the clause.
             let vsat = clause.literals.map(|l| {
                 let q_i = if l.is_negated { -1.0 } else { 1.0 };
@@ -34,14 +35,17 @@ pub fn compute_derivatives(y: &State, dy: &mut State, formula: &CNFFormula, zeta
             });
 
             // The degree to which the clause is satisfied.
-            let c_m = 0.5 * vsat.iter().map(|x| x.1).fold(f64::INFINITY, f64::min);
+            let c_m = 0.5
+                * vsat.fold(f64::INFINITY, |acc, (_, vsat_value, _)| {
+                    acc.min(*vsat_value)
+                });
 
             vsat.for_each(|(i, _, q_i)| {
                 // the gradient term for clause m and variable i.
                 let g_m_i = 0.5
                     * q_i
                     * vsat.fold(f64::INFINITY, |acc, (j, vsat_value, _)| {
-                        acc.min(if j != i { f64::INFINITY } else { *vsat_value })
+                        acc.min(if j == i { f64::INFINITY } else { *vsat_value })
                     });
 
                 // the rigidity term for clause m and variable i.
@@ -56,16 +60,14 @@ pub fn compute_derivatives(y: &State, dy: &mut State, formula: &CNFFormula, zeta
             });
 
             // Compute the derivatives for the memories
-            dy.xs[index] = BETA * (xs_m + EPSILON) * (c_m - GAMMA);
-            dy.xl[index] = ALPHA * (c_m - DELTA);
+            *dxs_m = BETA * (xs_m + EPSILON) * (c_m - GAMMA);
+            *dxl_m = ALPHA * (c_m - DELTA);
 
             // Is the clause satisfied?
-            c_m < 0.5
-        })
-        // Note, collect is important here since it forces full evaluate; laziness breaks this
-        .collect::<Vec<bool>>()
-        .iter()
-        .all(|&x| x)
+            allsat = allsat && c_m < 0.5
+        });
+
+    allsat
 }
 
 pub fn update_state(state: &mut State, derivatives: &State, dt: f64, clause_nums: usize) {
