@@ -17,8 +17,11 @@ struct Opts {
 
 #[derive(Subcommand)]
 pub enum Command {
+    /// Run a single simulation
     Solve(SolveOpts),
+    /// Run a batch of simulations, sequentially
     Batch(BatchOpts),
+    /// Run a batch of simulations with their executions interlaced
     Inter(InterhOpts),
 }
 
