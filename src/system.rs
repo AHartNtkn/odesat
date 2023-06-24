@@ -10,6 +10,12 @@ pub struct State {
     pub xl: Array1<f64>, // Long term memory
 }
 
+pub struct SlabState {
+    slab: Slab<(usize, f64, f64)>,
+    min_vsat: f64,
+    second_min_vsat: f64,
+}
+
 const ALPHA: f64 = 5.0;
 const BETA: f64 = 20.0;
 const GAMMA: f64 = 0.25;
@@ -21,7 +27,7 @@ pub fn compute_derivatives(
     dy: &mut State,
     formula: &CNFFormula,
     zeta: f64,
-    slab: &mut Slab<(usize, f64, f64)>,
+    slab: &mut SlabState,
 ) -> bool {
     // Reset variable derivative
     dy.v.fill(0.0);
@@ -33,26 +39,35 @@ pub fn compute_derivatives(
         .and(&mut dy.xl)
         .map_collect(|clause, &xs_m, &xl_m, dxs_m, dxl_m| {
             // Stores the degree that each variable satisfies the clause.
-            slab.clear();
+            // Also calculates minimum and second-minumum for later use
+            slab.min_vsat = f64::INFINITY;
+            slab.second_min_vsat = f64::INFINITY;
+            slab.slab.clear();
             for l in clause.literals.iter() {
                 let q_i = if l.is_negated { -1.0 } else { 1.0 };
                 let v_i = y.v[l.variable];
-                slab.insert((l.variable, 1.0 - q_i * v_i, q_i));
+                let value = 1.0 - q_i * v_i;
+                if value < slab.min_vsat {
+                    slab.second_min_vsat = slab.min_vsat;
+                    slab.min_vsat = value;
+                } else if value < slab.second_min_vsat {
+                    slab.second_min_vsat = value;
+                }
+                slab.slab.insert((l.variable, value, q_i));
             }
 
             // The degree to which the clause is satisfied.
-            let c_m = 0.5
-                * slab.iter().fold(f64::INFINITY, |acc, (_, (_, vsat_value, _))| {
-                    acc.min(*vsat_value)
-                });
+            let c_m = 0.5 * slab.min_vsat;
 
-            for (_, (i, _, q_i)) in slab.iter() {
+            for (_, (i, val, q_i)) in slab.slab.iter() {
                 // the gradient term for clause m and variable i.
                 let g_m_i: f64 = 0.5
                     * *q_i
-                    * slab.iter().fold(f64::INFINITY, |acc, (_, (j, vsat_value, _))| {
-                        acc.min(if j == i { f64::INFINITY } else { *vsat_value })
-                    });
+                    * if *val != slab.min_vsat {
+                        slab.min_vsat
+                    } else {
+                        slab.second_min_vsat
+                    };
 
                 // the rigidity term for clause m and variable i.
                 let r_m_i = if c_m == (1.0 - *q_i * y.v[*i]) {
@@ -62,9 +77,8 @@ pub fn compute_derivatives(
                 };
 
                 // Accumulate the derivative of v_i from clause m
-                dy.v[*i] +=
-                    xl_m * xs_m * g_m_i + (1.0 + zeta * xl_m) * (1.0 - xs_m) * r_m_i
-            };
+                dy.v[*i] += xl_m * xs_m * g_m_i + (1.0 + zeta * xl_m) * (1.0 - xs_m) * r_m_i
+            }
 
             // Compute the derivatives for the memories
             *dxs_m = BETA * (xs_m + EPSILON) * (c_m - GAMMA);
@@ -101,7 +115,7 @@ pub fn euler_step(
     tolerance: f64,
     dt: &mut f64,
     zeta: f64,
-    slab: &mut Slab<(usize, f64, f64)>,
+    slab: &mut SlabState,
 ) -> bool {
     let allsat = compute_derivatives(state, derivatives, formula, zeta, slab);
 
@@ -130,7 +144,7 @@ pub fn euler_step_fixed(
     formula: &CNFFormula,
     dt: f64,
     zeta: f64,
-    slab: &mut Slab<(usize, f64, f64)>,
+    slab: &mut SlabState,
 ) -> bool {
     let allsat = compute_derivatives(state, derivatives, formula, zeta, slab);
 
@@ -166,7 +180,11 @@ pub fn simulate(
         xl: Array1::zeros(formula.clauses.len()),
     };
 
-    let mut slab: Slab<(usize, f64, f64)> = Slab::with_capacity(10);
+    let mut slab: SlabState = SlabState {
+        slab: Slab::with_capacity(10),
+        min_vsat: f64::INFINITY,
+        second_min_vsat: f64::INFINITY,
+    };
 
     // Repeat euler integration.
     if let Some(step_size) = step_size {
