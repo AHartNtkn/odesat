@@ -71,7 +71,7 @@ pub fn compute_derivatives(
             *dxl_m = ALPHA * (c_m - DELTA);
 
             // Is the clause satisfied?
-            c_m < 0.5
+            c_m < GAMMA
         })
         .fold(true, |acc, x| acc && *x)
 }
