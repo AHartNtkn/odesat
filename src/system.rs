@@ -12,8 +12,8 @@ pub struct State {
 
 pub struct SlabState {
     slab: Slab<(usize, f64, f64)>,
-    min_vsat: f64,
-    second_min_vsat: f64,
+    min: f64,
+    second_min: f64,
 }
 
 const ALPHA: f64 = 5.0;
@@ -40,33 +40,33 @@ pub fn compute_derivatives(
         .map_collect(|clause, &xs_m, &xl_m, dxs_m, dxl_m| {
             // Stores the degree that each variable satisfies the clause.
             // Also calculates minimum and second-minumum for later use
-            slab.min_vsat = f64::INFINITY;
-            slab.second_min_vsat = f64::INFINITY;
+            slab.min = f64::INFINITY;
+            slab.second_min = f64::INFINITY;
             slab.slab.clear();
             for l in clause.literals.iter() {
                 let q_i = if l.is_negated { -1.0 } else { 1.0 };
                 let v_i = y.v[l.variable];
                 let value = 1.0 - q_i * v_i;
-                if value < slab.min_vsat {
-                    slab.second_min_vsat = slab.min_vsat;
-                    slab.min_vsat = value;
-                } else if value < slab.second_min_vsat {
-                    slab.second_min_vsat = value;
+                if value < slab.min {
+                    slab.second_min = slab.min;
+                    slab.min = value;
+                } else if value < slab.second_min {
+                    slab.second_min = value;
                 }
                 slab.slab.insert((l.variable, value, q_i));
             }
 
             // The degree to which the clause is satisfied.
-            let c_m = 0.5 * slab.min_vsat;
+            let c_m = 0.5 * slab.min;
 
             for (_, (i, val, q_i)) in slab.slab.iter() {
                 // the gradient term for clause m and variable i.
                 let g_m_i: f64 = 0.5
                     * *q_i
-                    * if *val != slab.min_vsat {
-                        slab.min_vsat
+                    * if *val != slab.min {
+                        slab.min
                     } else {
-                        slab.second_min_vsat
+                        slab.second_min
                     };
 
                 // the rigidity term for clause m and variable i.
@@ -182,8 +182,8 @@ pub fn simulate(
 
     let mut slab: SlabState = SlabState {
         slab: Slab::with_capacity(10),
-        min_vsat: f64::INFINITY,
-        second_min_vsat: f64::INFINITY,
+        min: f64::INFINITY,
+        second_min: f64::INFINITY,
     };
 
     // Repeat euler integration.
