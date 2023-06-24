@@ -1,3 +1,4 @@
+use ndarray::prelude::*;
 use std::collections::{HashMap, HashSet};
 
 pub struct Literal {
@@ -15,32 +16,27 @@ impl Literal {
 }
 
 pub struct CNFClause {
-    pub literals: Vec<Literal>,
+    pub literals: Array1<Literal>,
 }
 
 impl CNFClause {
-    pub fn new(literals: Vec<Literal>) -> Self {
+    pub fn new(literals: Array1<Literal>) -> Self {
         Self { literals }
     }
 
-    // Function to add a literal to the clause.
-    pub fn add_literal(&mut self, literal: Literal) {
-        self.literals.push(literal);
-    }
-
     // Function to return the literals in the clause.
-    pub fn get_literals(&self) -> &Vec<Literal> {
+    pub fn get_literals(&self) -> &Array1<Literal> {
         &self.literals
     }
 }
 
 pub struct CNFFormula {
-    pub clauses: Vec<CNFClause>,
+    pub clauses: Array1<CNFClause>,
     pub varnum: usize,
 }
 
 impl CNFFormula {
-    pub fn new(clauses: Vec<CNFClause>, varnum: Option<usize>) -> Self {
+    pub fn new(clauses: Array1<CNFClause>, varnum: Option<usize>) -> Self {
         if let Some(varnum) = varnum {
             Self { clauses, varnum }
         } else {
@@ -136,11 +132,11 @@ pub fn parse_dimacs_format(input: &str) -> CNFFormula {
                 })
                 .collect();
 
-            clauses.push(CNFClause::new(literals));
+            clauses.push(CNFClause::new(literals.into()));
         }
     }
 
-    CNFFormula::new(clauses, varnum)
+    CNFFormula::new(clauses.into(), varnum)
 }
 
 pub fn apply_variable_mapping(
@@ -163,11 +159,11 @@ pub fn apply_variable_mapping(
             }
         }
 
-        let mapped_clause = CNFClause::new(mapped_literals);
+        let mapped_clause = CNFClause::new(mapped_literals.into());
         mapped_clauses.push(mapped_clause);
     }
 
-    CNFFormula::new(mapped_clauses, Some(formula.varnum))
+    CNFFormula::new(mapped_clauses.into(), Some(formula.varnum))
 }
 
 // Normalizes the variables of CNF function. That is, the smallest variable should be 0, and
