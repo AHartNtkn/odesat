@@ -38,7 +38,7 @@ pub fn threesat_solver(formula: &CNFFormula, iterations: usize) -> Array1<f64> {
         let min_clauses: Vec<usize> = valuations
             .iter()
             .enumerate()
-            .filter(|&(_, &valuation)| (valuation - min_valuation).abs() < f64::EPSILON)
+            .filter(|&(_, &valuation)| valuation == min_valuation)
             .map(|(index, _)| index)
             .collect();
 
