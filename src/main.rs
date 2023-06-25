@@ -1,6 +1,7 @@
 use clap::{Args, Parser, Subcommand};
 use ndarray::Array1;
 use odesat::cnf::*;
+use odesat::local::*;
 use odesat::system::*;
 use rand::Rng;
 use std::collections::HashMap;
@@ -23,6 +24,8 @@ pub enum Command {
     Batch(BatchOpts),
     /// Run a batch of simulations with their executions interlaced
     Inter(InterhOpts),
+    /// Run a local search using a statistical algorithm
+    Local(LocalOpts),
 }
 
 #[derive(Args)]
@@ -112,6 +115,21 @@ pub struct InterhOpts {
     /// Learning rate
     #[arg(short = 'l', long)]
     pub learning_rate: Option<f64>,
+}
+
+#[derive(Args)]
+pub struct LocalOpts {
+    /// Input file containing the CNF formula
+    #[arg(short = 'f', long)]
+    pub input: PathBuf,
+
+    /// Optional output file
+    #[arg(short = 'o', long)]
+    pub output: Option<PathBuf>,
+
+    /// Step number
+    #[arg(short = 'n', long)]
+    pub step_number: Option<usize>,
 }
 
 fn solve(solve_opts: SolveOpts) -> Result<(), Box<dyn std::error::Error>> {
@@ -264,9 +282,9 @@ fn inter(batch_opts: InterhOpts) -> Result<(), Box<dyn std::error::Error>> {
     let mut rng = rand::thread_rng();
 
     let mut states = vec![];
-    
+
     for _ in 0..batch_size {
-        states.push( State {
+        states.push(State {
             v: Array1::from_iter(
                 (0..normalized_formula.varnum).map(|_| rng.gen::<f64>() * 2.0 - 1.0),
             ),
@@ -303,6 +321,43 @@ fn inter(batch_opts: InterhOpts) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+// Batch run many, initializing them all at once and interlacing their execution.
+fn local(local_opts: LocalOpts) -> Result<(), Box<dyn std::error::Error>> {
+    let input_path = &local_opts.input;
+    let output_path = &local_opts.output;
+    let step_number = local_opts.step_number;
+
+    println!("Reading CNF formula from file...");
+    let cnf_string = fs::read_to_string(input_path)?;
+
+    println!("Parsing CNF formula...");
+    let formula = parse_dimacs_format(&cnf_string);
+
+    println!("Normalizing CNF formula...");
+    let (var_mapping, normalized_formula) = normalize_cnf_variables(&formula);
+
+    println!("Searching...");
+    let result = search(&normalized_formula, step_number);
+
+    // Map values and check if the formula is satisfiable
+    let mapped_values = map_values_by_indices(&var_mapping, &result);
+    let is_satisfiable = evaluate_cnf(&mapped_values, &formula);
+
+    println!("\nChecking if solution vector satisfies formula: {is_satisfiable}");
+
+    println!("Rendering variable assignments...");
+    let render_str = render_variable_map(&mapped_values);
+
+    if let Some(output_path) = output_path {
+        println!("Writing results to file...");
+        fs::write(output_path, render_str)?;
+    } else {
+        println!("Variable assignments:\n{render_str}");
+    }
+
+    Ok(())
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let opts: Opts = Opts::parse();
 
@@ -310,5 +365,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Command::Solve(solve_opts) => solve(solve_opts),
         Command::Batch(batch_opts) => batch(batch_opts),
         Command::Inter(inter_opts) => inter(inter_opts),
+        Command::Local(local_opts) => local(local_opts),
     }
 }

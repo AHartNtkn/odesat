@@ -1,6 +1,7 @@
 use ndarray::prelude::*;
 use std::collections::{HashMap, HashSet};
 
+#[derive(Debug, Clone, Default)]
 pub struct Literal {
     pub variable: usize,  // The identifier of a variable.
     pub is_negated: bool, // Whether this literal is a negation of the variable.
@@ -15,6 +16,7 @@ impl Literal {
     }
 }
 
+#[derive(Debug, Clone, Default)]
 pub struct CNFClause {
     pub literals: Array1<Literal>,
 }
@@ -30,6 +32,7 @@ impl CNFClause {
     }
 }
 
+#[derive(Debug, Clone, Default)]
 pub struct CNFFormula {
     pub clauses: Array1<CNFClause>,
     pub varnum: usize,

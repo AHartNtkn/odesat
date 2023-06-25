@@ -356,7 +356,6 @@ pub fn simulate_inter(
     } else {
         states[0].v.iter().map(|&value| value > 0.0).collect()
     }
-
 }
 
 // The initial short term memories; values if all variables are 0.
