@@ -498,6 +498,7 @@ pub fn repeatedly_resolve_and_update(
 
         // Map each variable to a set of unique variables that share clauses with it
         let mut shared_vars_map: HashMap<usize, HashSet<usize>> = HashMap::new();
+        let mut appearances_map = HashMap::new();
         for clause in formula.clauses.iter() {
             let clause_vars: HashSet<usize> = clause
                 .get_literals()
@@ -509,17 +510,19 @@ pub fn repeatedly_resolve_and_update(
                     .entry(*variable)
                     .or_insert_with(HashSet::new);
                 entry.extend(clause_vars.iter().filter(|&v| v != variable));
+                *appearances_map.entry(*variable).or_insert(0) += 1;
             }
         }
 
-        // Find the variable that shares clauses with the smallest number of unique other variables
+        // Find the variable that shares clauses with the smallest number of unique other variables,
+        // and among those, the one that appears the fewest times
         let mut min_variable = 0;
-        let mut min_unique_shared = usize::MAX;
+        let mut min_criteria = (usize::MAX, usize::MAX);
         for (variable, shared_vars_set) in shared_vars_map {
-            let shared_vars_count = shared_vars_set.len();
-            if shared_vars_count < min_unique_shared {
+            let criteria = (shared_vars_set.len(), appearances_map[&variable]);
+            if criteria < min_criteria {
                 min_variable = variable;
-                min_unique_shared = shared_vars_count;
+                min_criteria = criteria;
             }
         }
 
