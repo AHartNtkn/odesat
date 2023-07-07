@@ -24,3 +24,15 @@ One can also run in batch mode. And, instead of specifying a tolerance for the a
 ```
 cargo run batch -f tests/easy.cnf -n 1000 -b 100 -s 0.01 -o tests/out
 ```
+
+One can also run batches of simulations interlaced using `inter`.
+
+```
+cargo run inter -f tests/easy.cnf -n 1000 -b 100 -s 0.01 -o tests/out
+```
+
+Additionally, `solve` will preprocess the formula until it has a desired clause-to-variable ratio. This is specified with `-r`, and defaults to 7. This is necessary to solve cnfs with a low (~2) clause to variable ratio.
+
+```
+cargo run solve -f tests/easy.cnf -o tests/out -r 6
+```
