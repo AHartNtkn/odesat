@@ -243,21 +243,16 @@ pub fn cnf_to_dimacs_format(formula: &CNFFormula) -> String {
     dimacs_string
 }
 
-pub fn evaluate_cnf(variables: &HashMap<usize, bool>, formula: &CNFFormula) -> bool {
+pub fn evaluate_cnf(variables: &mut HashMap<usize, bool>, formula: &CNFFormula) -> bool {
     for clause in &formula.clauses {
         let mut clause_result = false;
 
         for literal in clause.get_literals() {
             let variable = literal.variable;
             let is_negated = literal.is_negated;
-
-            if let Some(value) = variables.get(&variable) {
-                let literal_result = if is_negated { !value } else { *value };
-                clause_result = clause_result || literal_result;
-            } else {
-                // Variable not found in the provided map
-                return false;
-            }
+            let value = *variables.entry(variable).or_insert(false);
+            let literal_result = if is_negated { !value } else { value };
+            clause_result = clause_result || literal_result;
         }
 
         if !clause_result {
@@ -534,28 +529,24 @@ pub fn repeatedly_resolve_and_update(
     resolved_variables
 }
 
-fn evaluate_btree_set_cnf(
-    assignment: &HashMap<usize, bool>,
-    cnf: &Vec<CNFClauseSet>,
-) -> Option<bool> {
-    for clause in cnf {
-        let mut clause_satisfied = false;
+fn evaluate_btree_set_cnf(assignment: &mut HashMap<usize, bool>, cnf: &[CNFClauseSet]) -> bool {
+    for clause in cnf.iter() {
+        let mut clause_result = false;
+
         for literal in clause.get_literals() {
-            if let Some(&value) = assignment.get(&literal.variable) {
-                if literal.is_negated {
-                    clause_satisfied = clause_satisfied || !value;
-                } else {
-                    clause_satisfied = clause_satisfied || value;
-                }
-            } else {
-                return None;
-            }
+            let variable = literal.variable;
+            let is_negated = literal.is_negated;
+            let value = *assignment.entry(variable).or_insert(false);
+            let literal_result = if is_negated { !value } else { value };
+            clause_result = clause_result || literal_result;
         }
-        if !clause_satisfied {
-            return Some(false);
+
+        if !clause_result {
+            return false;
         }
     }
-    Some(true)
+
+    true
 }
 
 // Calculate values for variables eliminated during preprocessing.
@@ -564,7 +555,7 @@ pub fn calculate_preprocessed(
     vec: Vec<(usize, Vec<CNFClauseSet>)>,
 ) {
     for (var, pos_cnf) in vec.into_iter().rev() {
-        let value = evaluate_btree_set_cnf(assignments, &pos_cnf) == Some(false);
+        let value = !evaluate_btree_set_cnf(assignments, &pos_cnf);
         assignments.insert(var, value);
     }
 }
