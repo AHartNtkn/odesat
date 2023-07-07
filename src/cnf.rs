@@ -255,7 +255,8 @@ pub fn evaluate_cnf(variables: &HashMap<usize, bool>, formula: &CNFFormula) -> b
                 let literal_result = if is_negated { !value } else { *value };
                 clause_result = clause_result || literal_result;
             } else {
-                // Variable not found in the provided map, skip the literal
+                // Variable not found in the provided map
+                return false;
             }
         }
 
@@ -495,21 +496,30 @@ pub fn repeatedly_resolve_and_update(
             break;
         }
 
-        // Count appearances of each variable
-        let mut variable_counts = HashMap::new();
-        for clause in formula.get_clauses() {
-            for literal in clause.get_literals() {
-                *variable_counts.entry(literal.variable).or_insert(0) += 1;
+        // Map each variable to a set of unique variables that share clauses with it
+        let mut shared_vars_map: HashMap<usize, HashSet<usize>> = HashMap::new();
+        for clause in formula.clauses.iter() {
+            let clause_vars: HashSet<usize> = clause
+                .get_literals()
+                .iter()
+                .map(|lit| lit.variable)
+                .collect();
+            for variable in clause_vars.iter() {
+                let entry = shared_vars_map
+                    .entry(*variable)
+                    .or_insert_with(HashSet::new);
+                entry.extend(clause_vars.iter().filter(|&v| v != variable));
             }
         }
 
-        // Find the variable that appears the least
+        // Find the variable that shares clauses with the smallest number of unique other variables
         let mut min_variable = 0;
-        let mut min_count = usize::MAX;
-        for (variable, count) in variable_counts {
-            if count < min_count {
+        let mut min_unique_shared = usize::MAX;
+        for (variable, shared_vars_set) in shared_vars_map {
+            let shared_vars_count = shared_vars_set.len();
+            if shared_vars_count < min_unique_shared {
                 min_variable = variable;
-                min_count = count;
+                min_unique_shared = shared_vars_count;
             }
         }
 
