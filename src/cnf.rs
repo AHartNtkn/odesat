@@ -1,6 +1,8 @@
 use ndarray::prelude::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
+use std::fmt;
 
+#[derive(Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq)]
 pub struct Literal {
     pub variable: usize,  // The identifier of a variable.
     pub is_negated: bool, // Whether this literal is a negation of the variable.
@@ -15,6 +17,17 @@ impl Literal {
     }
 }
 
+impl fmt::Display for Literal {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if self.is_negated {
+            write!(f, "¬{}", self.variable)
+        } else {
+            write!(f, "{}", self.variable)
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct CNFClause {
     pub literals: Array1<Literal>,
 }
@@ -30,6 +43,14 @@ impl CNFClause {
     }
 }
 
+impl fmt::Display for CNFClause {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let literals_str: Vec<String> = self.literals.iter().map(|lit| format!("{lit}")).collect();
+        write!(f, "({})", literals_str.join(" ∨ "))
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct CNFFormula {
     pub clauses: Array1<CNFClause>,
     pub varnum: usize,
@@ -100,6 +121,17 @@ impl CNFFormula {
             }
         }
         variable_set
+    }
+}
+
+impl fmt::Display for CNFFormula {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let clauses_str: Vec<String> = self
+            .clauses
+            .iter()
+            .map(|clause| format!("{clause}"))
+            .collect();
+        write!(f, "{}", clauses_str.join(" ∧ "))
     }
 }
 
@@ -261,4 +293,265 @@ where
     }
 
     mapped_values
+}
+
+// Set-like clauses and formulas for preproccessing
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct CNFClauseSet(BTreeSet<Literal>);
+
+impl CNFClauseSet {
+    pub fn new(literals: BTreeSet<Literal>) -> Self {
+        Self(literals)
+    }
+
+    pub fn get_literals(&self) -> &BTreeSet<Literal> {
+        &self.0
+    }
+}
+
+impl fmt::Display for CNFClauseSet {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let literals_str: Vec<String> = self.0.iter().map(|lit| format!("{lit}")).collect();
+        write!(f, "({})", literals_str.join(" ∨ "))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CNFFormulaSet {
+    pub clauses: BTreeSet<CNFClauseSet>,
+    pub varnum: usize,
+}
+
+impl CNFFormulaSet {
+    pub fn new(clauses: BTreeSet<CNFClauseSet>, varnum: Option<usize>) -> Self {
+        if let Some(varnum) = varnum {
+            Self { clauses, varnum }
+        } else {
+            let mut variables: HashSet<usize> = HashSet::new();
+
+            for clause in &clauses {
+                for literal in &clause.0 {
+                    variables.insert(literal.variable);
+                }
+            }
+
+            Self {
+                clauses,
+                varnum: variables.len(),
+            }
+        }
+    }
+
+    pub fn get_clauses(&self) -> &BTreeSet<CNFClauseSet> {
+        &self.clauses
+    }
+}
+
+impl fmt::Display for CNFFormulaSet {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let clauses_str: Vec<String> = self
+            .clauses
+            .iter()
+            .map(|clause| format!("{clause}"))
+            .collect();
+        write!(f, "{}", clauses_str.join(" ∧ "))
+    }
+}
+
+// Converts CNFFormula to CNFFormulaSet
+pub fn convert_to_cnf_formula_set(formula: &CNFFormula) -> CNFFormulaSet {
+    let mut clauses_set = BTreeSet::new();
+
+    for clause in formula.clauses.iter() {
+        let literals = clause.get_literals().iter().cloned().collect();
+        let clause_set = CNFClauseSet::new(literals);
+        clauses_set.insert(clause_set);
+    }
+
+    CNFFormulaSet {
+        clauses: clauses_set,
+        varnum: formula.varnum,
+    }
+}
+
+// Converts CNFFormulaSet to CNFFormula
+pub fn convert_to_cnf_formula(formula_set: &CNFFormulaSet) -> CNFFormula {
+    let mut clauses_array = Vec::new();
+
+    for clause_set in formula_set.clauses.iter() {
+        let literals = Array1::from(
+            clause_set
+                .get_literals()
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+        );
+        let clause = CNFClause::new(literals);
+        clauses_array.push(clause);
+    }
+
+    CNFFormula {
+        clauses: Array1::from(clauses_array),
+        varnum: formula_set.varnum,
+    }
+}
+
+// Apply elimination by clause distribution wrt `variable`
+pub fn resolve_and_update_formula(
+    formula: &mut CNFFormulaSet,
+    variable: usize,
+) -> Vec<CNFClauseSet> {
+    let mut new_clauses: BTreeSet<CNFClauseSet> = BTreeSet::new();
+    let mut original_clauses_pos = BTreeSet::new();
+    let mut original_clauses_neg = BTreeSet::new();
+
+    // Calculate relevant indices for the variable
+    for clause in formula.get_clauses() {
+        for literal in clause.get_literals() {
+            if literal.variable == variable {
+                if literal.is_negated {
+                    original_clauses_neg.insert(clause.clone());
+                } else {
+                    original_clauses_pos.insert(clause.clone());
+                }
+            }
+        }
+    }
+
+    let mut contained_literals: HashSet<(usize, bool)>;
+
+    for pos_clause in &original_clauses_pos {
+        'outer: for neg_clause in &original_clauses_neg {
+            let mut combined_literals = BTreeSet::new();
+            contained_literals = HashSet::new();
+
+            for literal in pos_clause.get_literals() {
+                if literal.variable != variable {
+                    combined_literals.insert(*literal);
+                    contained_literals.insert((literal.variable, literal.is_negated));
+                }
+            }
+
+            for literal in neg_clause.get_literals() {
+                if literal.variable != variable {
+                    let negated = (literal.variable, !literal.is_negated);
+                    if contained_literals.contains(&negated) {
+                        // If both a variable and its negation appear, skip
+                        continue 'outer;
+                    }
+                    combined_literals.insert(*literal);
+                }
+            }
+
+            new_clauses.insert(CNFClauseSet::new(combined_literals));
+        }
+    }
+
+    // Modify the formula's clauses
+    for pos_clause in &original_clauses_pos {
+        formula.clauses.remove(pos_clause);
+    }
+
+    for neg_clause in &original_clauses_neg {
+        formula.clauses.remove(neg_clause);
+    }
+
+    for new_clause in new_clauses {
+        formula.clauses.insert(new_clause);
+    }
+
+    formula.varnum -= 1;
+
+    // Create modified versions of the original clauses with the specific Literal removed
+    let modified_clauses_pos: Vec<CNFClauseSet> = original_clauses_pos
+        .iter()
+        .map(|clause| {
+            let mut modified = clause.clone();
+            modified.0.remove(&Literal {
+                variable,
+                is_negated: false,
+            });
+            modified
+        })
+        .collect();
+
+    modified_clauses_pos
+}
+
+// Apply elimination by clause distribution until clause/variable ratio is high enough.
+// This increases the connectedness of the topology, giving the prover an easier time of solving things.
+pub fn repeatedly_resolve_and_update(
+    formula: &mut CNFFormulaSet,
+    desired_ratio: f32,
+) -> Vec<(usize, Vec<CNFClauseSet>)> {
+    let mut resolved_variables = Vec::new();
+
+    loop {
+        // Calculate the current ratio
+        let current_ratio = formula.clauses.len() as f32 / formula.varnum as f32;
+
+        // Break if the desired ratio is reached
+        if current_ratio >= desired_ratio {
+            break;
+        }
+
+        // Count appearances of each variable
+        let mut variable_counts = HashMap::new();
+        for clause in formula.get_clauses() {
+            for literal in clause.get_literals() {
+                *variable_counts.entry(literal.variable).or_insert(0) += 1;
+            }
+        }
+
+        // Find the variable that appears the least
+        let mut min_variable = 0;
+        let mut min_count = usize::MAX;
+        for (variable, count) in variable_counts {
+            if count < min_count {
+                min_variable = variable;
+                min_count = count;
+            }
+        }
+
+        // Apply resolve_and_update_formula on the selected variable
+        let resolved = resolve_and_update_formula(formula, min_variable);
+        resolved_variables.push((min_variable, resolved));
+    }
+
+    resolved_variables
+}
+
+fn evaluate_btree_set_cnf(
+    assignment: &HashMap<usize, bool>,
+    cnf: &Vec<CNFClauseSet>,
+) -> Option<bool> {
+    for clause in cnf {
+        let mut clause_satisfied = false;
+        for literal in clause.get_literals() {
+            if let Some(&value) = assignment.get(&literal.variable) {
+                if literal.is_negated {
+                    clause_satisfied = clause_satisfied || !value;
+                } else {
+                    clause_satisfied = clause_satisfied || value;
+                }
+            } else {
+                return None;
+            }
+        }
+        if !clause_satisfied {
+            return Some(false);
+        }
+    }
+    Some(true)
+}
+
+// Calculate values for variables eliminated during preprocessing.
+pub fn calculate_preprocessed(
+    assignments: &mut HashMap<usize, bool>,
+    vec: Vec<(usize, Vec<CNFClauseSet>)>,
+) {
+    for (var, pos_cnf) in vec.into_iter().rev() {
+        let value = evaluate_btree_set_cnf(assignments, &pos_cnf) == Some(false);
+        assignments.insert(var, value);
+    }
 }

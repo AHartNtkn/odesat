@@ -50,6 +50,10 @@ pub struct SolveOpts {
     /// Learning rate
     #[arg(short = 'l', long)]
     pub learning_rate: Option<f64>,
+
+    /// Clause-to-Variable Ratio
+    #[arg(short = 'r', long)]
+    pub ctv_ratio: Option<f32>,
 }
 
 #[derive(Args)]
@@ -121,6 +125,11 @@ fn solve(solve_opts: SolveOpts) -> Result<(), Box<dyn std::error::Error>> {
     let step_number = solve_opts.step_number;
     let step_size = solve_opts.step_size;
     let learning_rate = solve_opts.learning_rate;
+    let ctv_ratio = if let Some(rat) = solve_opts.ctv_ratio {
+        rat
+    } else {
+        7.0
+    };
 
     println!("Reading CNF formula from file...");
     let cnf_string = fs::read_to_string(input_path)?;
@@ -128,14 +137,17 @@ fn solve(solve_opts: SolveOpts) -> Result<(), Box<dyn std::error::Error>> {
     println!("Parsing CNF formula...");
     let formula = parse_dimacs_format(&cnf_string);
 
-    println!("Normalizing CNF formula...");
-    let (var_mapping, normalized_formula) = normalize_cnf_variables(&formula);
+    println!("Preprocessing CNF formula...");
+    let mut set_formula = convert_to_cnf_formula_set(&formula);
+    let eliminated_vars = repeatedly_resolve_and_update(&mut set_formula, ctv_ratio);
+    let new_formula = convert_to_cnf_formula(&set_formula);
+    let (var_mapping, normalized_formula) = normalize_cnf_variables(&new_formula);
 
     println!("Simulating...");
     let mut rng = rand::thread_rng();
     let mut state = State {
         v: Array1::from_iter((0..normalized_formula.varnum).map(|_| rng.gen::<f64>() * 2.0 - 1.0)),
-        xs: init_short_term_memory(&formula),
+        xs: init_short_term_memory(&normalized_formula),
         xl: Array1::ones(normalized_formula.clauses.len()),
     };
 
@@ -149,7 +161,8 @@ fn solve(solve_opts: SolveOpts) -> Result<(), Box<dyn std::error::Error>> {
     );
 
     println!("Mapping values...");
-    let mapped_values = map_values_by_indices(&var_mapping, &result);
+    let mut mapped_values = map_values_by_indices(&var_mapping, &result);
+    calculate_preprocessed(&mut mapped_values, eliminated_vars);
 
     println!("Evaluating CNF formula...");
     let is_satisfiable = evaluate_cnf(&mapped_values, &formula);
@@ -264,9 +277,9 @@ fn inter(batch_opts: InterhOpts) -> Result<(), Box<dyn std::error::Error>> {
     let mut rng = rand::thread_rng();
 
     let mut states = vec![];
-    
+
     for _ in 0..batch_size {
-        states.push( State {
+        states.push(State {
             v: Array1::from_iter(
                 (0..normalized_formula.varnum).map(|_| rng.gen::<f64>() * 2.0 - 1.0),
             ),
