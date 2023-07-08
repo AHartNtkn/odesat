@@ -162,10 +162,10 @@ fn solve(solve_opts: SolveOpts) -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Mapping values...");
     let mut mapped_values = map_values_by_indices(&var_mapping, &result);
-    calculate_preprocessed(&mut mapped_values, eliminated_vars);
+    calculate_trace(&mut mapped_values, eliminated_vars);
 
     println!("Evaluating CNF formula...");
-    let is_satisfiable = evaluate_cnf(&mut mapped_values, &formula);
+    let is_satisfiable = evaluate_cnf(&mut mapped_values, formula);
     println!("Checking if solution vector satisfies formula: {is_satisfiable}");
 
     println!("Rendering variable assignments...");
@@ -215,7 +215,7 @@ fn batch(batch_opts: BatchOpts) -> Result<(), Box<dyn std::error::Error>> {
             v: Array1::from_iter(
                 (0..normalized_formula.varnum).map(|_| rng.gen::<f64>() * 2.0 - 1.0),
             ),
-            xs: init_short_term_memory(&formula),
+            xs: init_short_term_memory(&normalized_formula),
             xl: Array1::ones(normalized_formula.clauses.len()),
         };
 
@@ -231,7 +231,7 @@ fn batch(batch_opts: BatchOpts) -> Result<(), Box<dyn std::error::Error>> {
 
         // Map values and check if the formula is satisfiable
         mapped_values = map_values_by_indices(&var_mapping, &result);
-        is_satisfiable = evaluate_cnf(&mut mapped_values, &formula);
+        is_satisfiable = evaluate_cnf(&mut mapped_values, formula.clone());
 
         if is_satisfiable {
             break;
@@ -299,7 +299,7 @@ fn inter(batch_opts: InterhOpts) -> Result<(), Box<dyn std::error::Error>> {
 
     // Map values and check if the formula is satisfiable
     let mut mapped_values = map_values_by_indices(&var_mapping, &result);
-    let is_satisfiable = evaluate_cnf(&mut mapped_values, &formula);
+    let is_satisfiable = evaluate_cnf(&mut mapped_values, formula);
 
     println!("\nChecking if solution vector satisfies formula: {is_satisfiable}");
 
