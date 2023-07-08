@@ -392,11 +392,166 @@ pub fn convert_to_cnf_formula(formula_set: &CNFFormulaSet) -> CNFFormula {
     }
 }
 
-// Apply elimination by clause distribution wrt `variable`
-pub fn resolve_and_update_formula(
-    formula: &mut CNFFormulaSet,
+fn calculate_variable_indices(
+    clauses: &BTreeSet<CNFClauseSet>,
+) -> HashMap<usize, (Vec<CNFClauseSet>, Vec<CNFClauseSet>)> {
+    let mut map: HashMap<usize, (Vec<CNFClauseSet>, Vec<CNFClauseSet>)> = HashMap::new();
+
+    for clause in clauses {
+        for literal in &clause.0 {
+            let entry = map.entry(literal.variable).or_insert((vec![], vec![]));
+
+            if literal.is_negated {
+                entry.1.push(clause.clone());
+            } else {
+                entry.0.push(clause.clone());
+            }
+        }
+    }
+
+    map
+}
+
+pub fn calculate_resolvents(
+    variable_index_map: &HashMap<usize, (Vec<CNFClauseSet>, Vec<CNFClauseSet>)>,
+    clause: &CNFClauseSet,
     variable: usize,
 ) -> Vec<CNFClauseSet> {
+    let mut resolvents: Vec<CNFClauseSet> = vec![];
+    let other_clauses = if clause
+        .get_literals()
+        .contains(&Literal::new(variable, false))
+    {
+        &variable_index_map[&variable].1
+    } else {
+        &variable_index_map[&variable].0
+    };
+
+    for other_clause in other_clauses {
+        let mut combined_literals: BTreeSet<Literal> = BTreeSet::new();
+        let mut contained_literals: HashSet<(usize, bool)> = HashSet::new();
+        for literal in clause.get_literals() {
+            if literal.variable != variable {
+                combined_literals.insert(*literal);
+                contained_literals.insert((literal.variable, literal.is_negated));
+            }
+        }
+        for literal in other_clause.get_literals() {
+            if literal.variable != variable {
+                let negated = (literal.variable, !literal.is_negated);
+                if contained_literals.contains(&negated) {
+                    combined_literals.clear();
+                    break;
+                }
+                combined_literals.insert(*literal);
+            }
+        }
+        if !combined_literals.is_empty() {
+            resolvents.push(CNFClauseSet::new(combined_literals));
+        }
+    }
+    resolvents
+}
+
+pub fn calculate_var_resolvents(
+    variable_index_map: &HashMap<usize, (Vec<CNFClauseSet>, Vec<CNFClauseSet>)>,
+    variable: usize,
+) -> BTreeSet<CNFClauseSet> {
+    let mut all_resolvents: BTreeSet<CNFClauseSet> = BTreeSet::new();
+
+    let (pos_clauses, _) = &variable_index_map[&variable];
+
+    for pos_clause in pos_clauses {
+        all_resolvents.extend(calculate_resolvents(
+            variable_index_map,
+            pos_clause,
+            variable,
+        ));
+    }
+
+    all_resolvents
+}
+
+fn subsume_clauses(clauses: &mut BTreeSet<CNFClauseSet>) {
+    // First we will create a clone of the set.
+    let mut to_remove = Vec::new();
+    for clause in clauses.iter() {
+        // We'll look for clauses that are a proper subset of this one.
+        for potential_subset in clauses.iter() {
+            // We skip the comparison if the clauses are identical.
+            if clause != potential_subset && clause.0.is_superset(&potential_subset.0) {
+                to_remove.push(clause.clone());
+                break; // No need to check the rest, it's already marked to be removed.
+            }
+        }
+    }
+
+    // Now, we remove the marked elements from the original set.
+    for clause in to_remove {
+        clauses.remove(&clause);
+    }
+}
+
+fn is_tautology(clause: &CNFClauseSet) -> bool {
+    for literal in clause.0.iter() {
+        if clause.0.contains(&Literal {
+            variable: literal.variable,
+            is_negated: !literal.is_negated,
+        }) {
+            return true;
+        }
+    }
+    false
+}
+
+#[inline(always)]
+fn eliminate_tautologies(clauses: &mut BTreeSet<CNFClauseSet>) {
+    clauses.retain(|clause| !is_tautology(clause));
+}
+
+// #[inline(always)]
+// fn is_blocked(
+//     clause: &CNFClauseSet,
+//     var_indices: &HashMap<usize, (Vec<CNFClauseSet>, Vec<CNFClauseSet>)>,
+// ) -> bool {
+//     for literal in &clause.0 {
+//         let resolvents = calculate_resolvents(var_indices, clause, literal.variable);
+//         if resolvents.iter().all(is_tautology) {
+//             return true;
+//         }
+//     }
+//     false
+// }
+
+// #[inline(always)]
+// fn eliminate_blocked_clauses(clauses: &mut BTreeSet<CNFClauseSet>) {
+//     let var_indices = calculate_variable_indices(&clauses);
+
+//     clauses.retain(|clause| !is_blocked(clause, &var_indices));
+// }
+
+// Find a variable that will reduce or maintain the size of the cnf.
+fn resolvents_reasonable(
+    var_indices: &HashMap<usize, (Vec<CNFClauseSet>, Vec<CNFClauseSet>)>,
+) -> Option<usize> {
+    for (&variable, (pos_clauses, neg_clauses)) in var_indices {
+        let num_occurrences = pos_clauses.len() + neg_clauses.len();
+
+        let mut resolvents = calculate_var_resolvents(var_indices, variable);
+
+        // eliminate tautologies and subsuming clauses
+        eliminate_tautologies(&mut resolvents);
+        subsume_clauses(&mut resolvents);
+
+        if resolvents.len() <= num_occurrences {
+            return Some(variable);
+        }
+    }
+    None
+}
+
+// Apply elimination by clause distribution wrt `variable`
+pub fn eliminate_variable(formula: &mut CNFFormulaSet, variable: usize) -> Vec<CNFClauseSet> {
     let mut new_clauses: BTreeSet<CNFClauseSet> = BTreeSet::new();
     let mut original_clauses_pos = BTreeSet::new();
     let mut original_clauses_neg = BTreeSet::new();
@@ -443,6 +598,8 @@ pub fn resolve_and_update_formula(
         }
     }
 
+    subsume_clauses(&mut new_clauses);
+
     // Modify the formula's clauses
     for pos_clause in &original_clauses_pos {
         formula.clauses.remove(pos_clause);
@@ -474,6 +631,28 @@ pub fn resolve_and_update_formula(
     modified_clauses_pos
 }
 
+fn eliminate_vars_w_small_resolvants(
+    formula: &mut CNFFormulaSet,
+) -> Vec<(usize, Vec<CNFClauseSet>)> {
+    let mut eliminated = Vec::new();
+
+    let mut var_indices: HashMap<usize, (Vec<CNFClauseSet>, Vec<CNFClauseSet>)>;
+
+    loop {
+        var_indices = calculate_variable_indices(&formula.clauses);
+
+        match resolvents_reasonable(&var_indices) {
+            Some(variable) => {
+                let eliminated_clauses = eliminate_variable(formula, variable);
+                eliminated.push((variable, eliminated_clauses));
+            }
+            None => break,
+        }
+    }
+
+    eliminated
+}
+
 // Apply elimination by clause distribution until clause/variable ratio is high enough.
 // This increases the connectedness of the topology, giving the prover an easier time of solving things.
 pub fn repeatedly_resolve_and_update(
@@ -483,47 +662,62 @@ pub fn repeatedly_resolve_and_update(
     let mut resolved_variables = Vec::new();
 
     loop {
-        // Calculate the current ratio
+        // Perform expensive optimizations
+        println!("Orig: {}", formula.clauses.len());
+        eliminate_tautologies(&mut formula.clauses);
+        resolved_variables.extend(eliminate_vars_w_small_resolvants(formula));
+        subsume_clauses(&mut formula.clauses);
+        println!("sm_res: {}", formula.clauses.len());
+        // eliminate_blocked_clauses(&mut formula.clauses);
+        // println!("blocked: {}", formula.clauses.len());
         let current_ratio = formula.clauses.len() as f32 / formula.varnum as f32;
-
-        // Break if the desired ratio is reached
-        if current_ratio >= desired_ratio {
+        if current_ratio >= desired_ratio || formula.clauses.is_empty() {
             break;
         }
 
-        // Map each variable to a set of unique variables that share clauses with it
-        let mut shared_vars_map: HashMap<usize, HashSet<usize>> = HashMap::new();
-        let mut appearances_map = HashMap::new();
-        for clause in formula.clauses.iter() {
-            let clause_vars: HashSet<usize> = clause
-                .get_literals()
-                .iter()
-                .map(|lit| lit.variable)
-                .collect();
-            for variable in clause_vars.iter() {
-                let entry = shared_vars_map
-                    .entry(*variable)
-                    .or_insert_with(HashSet::new);
-                entry.extend(clause_vars.iter().filter(|&v| v != variable));
-                *appearances_map.entry(*variable).or_insert(0) += 1;
-            }
-        }
+        loop {
+            // Calculate the current ratio
+            let current_ratio = formula.clauses.len() as f32 / formula.varnum as f32;
 
-        // Find the variable that shares clauses with the smallest number of unique other variables,
-        // and among those, the one that appears the fewest times
-        let mut min_variable = 0;
-        let mut min_criteria = (usize::MAX, usize::MAX);
-        for (variable, shared_vars_set) in shared_vars_map {
-            let criteria = (shared_vars_set.len(), appearances_map[&variable]);
-            if criteria < min_criteria {
-                min_variable = variable;
-                min_criteria = criteria;
+            // Break if the desired ratio is reached
+            if current_ratio >= desired_ratio || formula.clauses.is_empty() {
+                break;
             }
-        }
 
-        // Apply resolve_and_update_formula on the selected variable
-        let resolved = resolve_and_update_formula(formula, min_variable);
-        resolved_variables.push((min_variable, resolved));
+            // Map each variable to a set of unique variables that share clauses with it
+            let mut shared_vars_map: HashMap<usize, HashSet<usize>> = HashMap::new();
+            let mut appearances_map = HashMap::new();
+            for clause in formula.clauses.iter() {
+                let clause_vars: HashSet<usize> = clause
+                    .get_literals()
+                    .iter()
+                    .map(|lit| lit.variable)
+                    .collect();
+                for variable in clause_vars.iter() {
+                    let entry = shared_vars_map
+                        .entry(*variable)
+                        .or_insert_with(HashSet::new);
+                    entry.extend(clause_vars.iter().filter(|&v| v != variable));
+                    *appearances_map.entry(*variable).or_insert(0) += 1;
+                }
+            }
+
+            // Find the variable that shares clauses with the smallest number of unique other variables,
+            // and among those, the one that appears the fewest times
+            let mut min_variable = 0;
+            let mut min_criteria = (usize::MAX, usize::MAX);
+            for (variable, shared_vars_set) in shared_vars_map {
+                let criteria = (shared_vars_set.len(), appearances_map[&variable]);
+                if criteria < min_criteria {
+                    min_variable = variable;
+                    min_criteria = criteria;
+                }
+            }
+
+            // Apply eliminate_variable on the selected variable
+            let resolved = eliminate_variable(formula, min_variable);
+            resolved_variables.push((min_variable, resolved));
+        }
     }
 
     resolved_variables
