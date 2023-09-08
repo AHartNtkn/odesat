@@ -1,6 +1,7 @@
 use clap::{Args, Parser, Subcommand};
 use ndarray::Array1;
 use odesat::cnf::*;
+use odesat::stoch::search;
 use odesat::system::*;
 use rand::Rng;
 use std::collections::HashMap;
@@ -19,6 +20,8 @@ struct Opts {
 pub enum Command {
     /// Run a single simulation
     Solve(SolveOpts),
+    /// Run a stochastic search search
+    Stoch(StochOpts),
     /// Run a batch of simulations, sequentially
     Batch(BatchOpts),
     /// Run a batch of simulations with their executions interlaced
@@ -50,6 +53,25 @@ pub struct SolveOpts {
     /// Learning rate
     #[arg(short = 'l', long)]
     pub learning_rate: Option<f64>,
+
+    /// Clause-to-Variable Ratio
+    #[arg(short = 'r', long)]
+    pub ctv_ratio: Option<f32>,
+}
+
+#[derive(Args)]
+pub struct StochOpts {
+    /// Input file containing the CNF formula
+    #[arg(short = 'f', long)]
+    pub input: PathBuf,
+
+    /// Optional output file
+    #[arg(short = 'o', long)]
+    pub output: Option<PathBuf>,
+
+    /// Step number
+    #[arg(short = 'n', long)]
+    pub step_number: Option<usize>,
 
     /// Clause-to-Variable Ratio
     #[arg(short = 'r', long)]
@@ -159,6 +181,53 @@ fn solve(solve_opts: SolveOpts) -> Result<(), Box<dyn std::error::Error>> {
         step_number,
         learning_rate,
     );
+
+    println!("Mapping values...");
+    let mut mapped_values = map_values_by_indices(&var_mapping, &result);
+    calculate_trace(&mut mapped_values, eliminated_vars);
+
+    println!("Evaluating CNF formula...");
+    let is_satisfiable = evaluate_cnf(&mut mapped_values, formula);
+    println!("Checking if solution vector satisfies formula: {is_satisfiable}");
+
+    println!("Rendering variable assignments...");
+    let render_str = render_variable_map(&mapped_values);
+
+    if let Some(output_path) = output_path {
+        println!("Writing results to file...");
+        fs::write(output_path, render_str)?;
+    } else {
+        println!("Variable assignments:\n{render_str}");
+    }
+
+    Ok(())
+}
+
+fn stoch(solve_opts: StochOpts) -> Result<(), Box<dyn std::error::Error>> {
+    let input_path = &solve_opts.input;
+    let output_path = &solve_opts.output;
+    let step_number = solve_opts.step_number;
+    let ctv_ratio = if let Some(rat) = solve_opts.ctv_ratio {
+        rat
+    } else {
+        7.0
+    };
+
+    println!("Reading CNF formula from file...");
+    let cnf_string = fs::read_to_string(input_path)?;
+
+    println!("Parsing CNF formula...");
+    let formula = parse_dimacs_format(&cnf_string);
+
+    println!("Preprocessing CNF formula...");
+    let mut set_formula = convert_to_cnf_formula_set(&formula);
+    let eliminated_vars = repeatedly_resolve_and_update(&mut set_formula, ctv_ratio);
+    let new_formula = convert_to_cnf_formula(&set_formula);
+    let (var_mapping, normalized_formula) = normalize_cnf_variables(&new_formula);
+
+    println!("Simulating...");
+
+    let result = search(&normalized_formula, step_number);
 
     println!("Mapping values...");
     let mut mapped_values = map_values_by_indices(&var_mapping, &result);
@@ -321,6 +390,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match opts.cmd {
         Command::Solve(solve_opts) => solve(solve_opts),
+        Command::Stoch(stoch_opts) => stoch(stoch_opts),
         Command::Batch(batch_opts) => batch(batch_opts),
         Command::Inter(inter_opts) => inter(inter_opts),
     }

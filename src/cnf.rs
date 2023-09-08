@@ -509,9 +509,11 @@ pub fn calculate_trace(assignments: &mut HashMap<usize, bool>, trace: Simplifica
                 let mut sing_clauses = BTreeSet::new();
                 sing_clauses.insert(clause.clone());
                 if !evaluate_cnf_set(assignments, &sing_clauses) {
-                    assignments.insert(*var, !assignments[&var]);
+                    assignments.insert(*var, !assignments[var]);
                 }
-            }
+            } // SimplificationStep::UnitPropagation(var, bool) => {
+              //     assignments.insert(*var, *bool);
+              // }
         }
     }
 }
@@ -556,6 +558,7 @@ fn eliminate_tautologies(clauses: &mut BTreeSet<CNFClauseSet>) {
 pub enum SimplificationStep {
     VariableElimination(usize, BTreeSet<CNFClauseSet>),
     BlockedClauseElimination(usize, CNFClauseSet),
+    // UnitPropagation(usize, bool),
 }
 
 pub struct SimplificationTrace {
@@ -573,6 +576,11 @@ impl SimplificationTrace {
 
     pub fn extend(&mut self, trace: SimplificationTrace) {
         self.steps.extend(trace.steps);
+    }
+}
+impl Default for SimplificationTrace {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -595,10 +603,13 @@ fn eliminate_if_blocked(
     clause: &CNFClauseSet,
     clauses: &mut BTreeSet<CNFClauseSet>,
     var_indices: &mut HashMap<usize, (BTreeSet<CNFClauseSet>, BTreeSet<CNFClauseSet>)>,
-) -> Option<SimplificationStep> {
+) -> Option<(HashSet<usize>, SimplificationStep)> {
     if let Some(var) = is_blocked(clause, var_indices) {
+        let mut changed_vars = HashSet::new();
+
         // Update var_indices
         for literal in clause.get_literals() {
+            changed_vars.insert(literal.variable);
             let (pos_clauses, neg_clauses) = var_indices.entry(literal.variable).or_default();
             if literal.is_negated {
                 neg_clauses.remove(clause);
@@ -610,9 +621,9 @@ fn eliminate_if_blocked(
         // Remove the clause from clauses set
         clauses.remove(clause);
 
-        Some(SimplificationStep::BlockedClauseElimination(
-            var,
-            clause.clone(),
+        Some((
+            changed_vars,
+            SimplificationStep::BlockedClauseElimination(var, clause.clone()),
         ))
     } else {
         None
@@ -625,11 +636,13 @@ pub fn eliminate_variable(
     var_indices: &mut HashMap<usize, (BTreeSet<CNFClauseSet>, BTreeSet<CNFClauseSet>)>,
     variable: usize,
     resolvants: &BTreeSet<CNFClauseSet>,
-) -> BTreeSet<CNFClauseSet> {
+) -> (HashSet<usize>, BTreeSet<CNFClauseSet>) {
+    let mut changed_vars = HashSet::new();
+
     // Get original clauses containing the variable
     let (original_clauses_pos, original_clauses_neg) = match var_indices.remove(&variable) {
         Some(clauses) => clauses,
-        None => return BTreeSet::new(),
+        None => return (changed_vars, BTreeSet::new()),
     };
 
     // Identify variables in the original clauses that need to be updated in the map
@@ -645,6 +658,7 @@ pub fn eliminate_variable(
 
     // Remove all original clauses containing the variable from var_indices
     for &var in vars_to_update.iter() {
+        changed_vars.insert(var);
         if let Some((pos, neg)) = var_indices.get_mut(&var) {
             pos.retain(|clause| {
                 !original_clauses_pos.contains(clause) && !original_clauses_neg.contains(clause)
@@ -697,11 +711,12 @@ pub fn eliminate_variable(
         })
         .collect();
 
-    modified_clauses_pos
+    (changed_vars, modified_clauses_pos)
 }
 
 // Find variable whose elimination would minimize clause-to-variable increase, up to limit
 fn min_ratio_resolvant(
+    variables: &HashSet<usize>,
     var_indices: &HashMap<usize, (BTreeSet<CNFClauseSet>, BTreeSet<CNFClauseSet>)>,
     formula: &CNFFormulaSet,
     target_ratio: f32,
@@ -710,21 +725,23 @@ fn min_ratio_resolvant(
     let mut smallest_ratio = f32::MAX;
     let mut resolvents;
 
-    for (&variable, (pos_clauses, neg_clauses)) in var_indices {
-        resolvents = calculate_var_resolvents(var_indices, variable);
+    for variable in variables {
+        if let Some((pos_clauses, neg_clauses)) = var_indices.get(variable) {
+            resolvents = calculate_var_resolvents(var_indices, *variable);
 
-        // eliminate tautologies and subsuming clauses
-        eliminate_tautologies(&mut resolvents);
-        subsume_clauses(&mut resolvents);
+            // eliminate tautologies and subsuming clauses
+            eliminate_tautologies(&mut resolvents);
+            subsume_clauses(&mut resolvents);
 
-        let clause_count =
-            formula.clauses.len() - pos_clauses.len() - neg_clauses.len() + resolvents.len();
-        let var_count = formula.varnum - 1;
-        let new_ratio = clause_count as f32 / var_count as f32;
+            let clause_count =
+                formula.clauses.len() - pos_clauses.len() - neg_clauses.len() + resolvents.len();
+            let var_count = formula.varnum - 1;
+            let new_ratio = clause_count as f32 / var_count as f32;
 
-        if new_ratio < smallest_ratio {
-            smallest_ratio = new_ratio;
-            best_variable = Some((variable, resolvents));
+            if new_ratio < smallest_ratio {
+                smallest_ratio = new_ratio;
+                best_variable = Some((*variable, resolvents));
+            }
         }
     }
 
@@ -743,29 +760,70 @@ fn preprocessing_loop(
 ) -> SimplificationTrace {
     let mut trace = SimplificationTrace::new();
 
-    loop {
-        match min_ratio_resolvant(var_indices, formula, target_ratio) {
-            Some((variable, resolvants)) => {
-                let eliminated_clauses =
-                    eliminate_variable(formula, var_indices, variable, &resolvants);
-                trace.add_step(SimplificationStep::VariableElimination(
-                    variable,
-                    eliminated_clauses,
-                ));
+    // Eliminate initial blocked clauses
+    let mut blocked = Vec::new();
+    for clause in &formula.clauses {
+        if is_blocked(clause, var_indices).is_some() {
+            blocked.push(clause.clone())
+        }
+    }
+    for clause in blocked {
+        if let Some((_, blocked_step)) =
+            eliminate_if_blocked(&clause, &mut formula.clauses, var_indices)
+        {
+            trace.add_step(blocked_step);
+        }
+    }
 
-                // Iterate over resolvants and check if they can be eliminated as blocked
-                for resolvent in resolvants {
-                    if let Some(blocked_step) =
-                        eliminate_if_blocked(&resolvent, &mut formula.clauses, var_indices)
-                    {
-                        trace.add_step(blocked_step);
-                    }
-                }
+    // Initial set of variables to consider for elimination.
+    let mut elim_vars = HashSet::new();
+    for var in var_indices.keys() {
+        elim_vars.insert(*var);
+    }
+
+    // Eliminate variables that minimize clause-to-variable ratio increases until limit is reached
+    while let Some((variable, resolvants)) =
+        min_ratio_resolvant(&elim_vars, var_indices, formula, target_ratio)
+    {
+        elim_vars = HashSet::new();
+
+        let (changed_vars_1, eliminated_clauses) =
+            eliminate_variable(formula, var_indices, variable, &resolvants);
+        trace.add_step(SimplificationStep::VariableElimination(
+            variable,
+            eliminated_clauses,
+        ));
+        elim_vars.extend(changed_vars_1);
+
+        // Iterate over resolvants and check if they can be eliminated as blocked
+        for resolvent in resolvants {
+            if let Some((changed_vars_2, blocked_step)) =
+                eliminate_if_blocked(&resolvent, &mut formula.clauses, var_indices)
+            {
+                trace.add_step(blocked_step);
+                elim_vars.extend(changed_vars_2);
             }
-            None => break,
         }
     }
     subsume_clauses(&mut formula.clauses);
+
+    let mut min_len = usize::MAX;
+    let mut max_len = usize::MIN;
+    for res in &formula.clauses {
+        if res.0.len() < min_len {
+            min_len = res.0.len()
+        }
+        if res.0.len() > max_len {
+            max_len = res.0.len()
+        }
+    }
+    // println!("{min_len}");
+    // println!("{max_len}");
+    println!(
+        "Clauses: {} | Vars: {}",
+        formula.clauses.len(),
+        formula.varnum
+    );
 
     trace
 }
