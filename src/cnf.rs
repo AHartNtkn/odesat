@@ -30,11 +30,12 @@ impl fmt::Display for Literal {
 #[derive(Debug, Clone)]
 pub struct CNFClause {
     pub literals: Array1<Literal>,
+    pub weight: Option<f64>, // Optional weight for the clause
 }
 
 impl CNFClause {
-    pub fn new(literals: Array1<Literal>) -> Self {
-        Self { literals }
+    pub fn new(literals: Array1<Literal>, weight: Option<f64>) -> Self {
+        Self { literals, weight }
     }
 
     // Function to return the literals in the clause.
@@ -54,12 +55,13 @@ impl fmt::Display for CNFClause {
 pub struct CNFFormula {
     pub clauses: Array1<CNFClause>,
     pub varnum: usize,
+    pub must_clause_weight: Option<f64>, // Optional weight for "must have" clauses
 }
 
 impl CNFFormula {
-    pub fn new(clauses: Array1<CNFClause>, varnum: Option<usize>) -> Self {
+    pub fn new(clauses: Array1<CNFClause>, varnum: Option<usize>, must_clause_weight: Option<f64>) -> Self {
         if let Some(varnum) = varnum {
-            Self { clauses, varnum }
+            Self { clauses, varnum, must_clause_weight }
         } else {
             let mut variables: HashSet<usize> = HashSet::new();
 
@@ -72,6 +74,7 @@ impl CNFFormula {
             Self {
                 clauses,
                 varnum: variables.len(),
+                must_clause_weight,
             }
         }
     }
@@ -138,6 +141,7 @@ impl fmt::Display for CNFFormula {
 pub fn parse_dimacs_format(input: &str) -> CNFFormula {
     let mut clauses: Vec<CNFClause> = Vec::new();
     let mut varnum = None;
+    let mut must_clause_weight = None;
 
     for line in input.lines() {
         if line.starts_with('c') {
@@ -150,6 +154,12 @@ pub fn parse_dimacs_format(input: &str) -> CNFFormula {
             split.next(); // Skip the 'cnf' token
             varnum = Some(split.next().unwrap().parse().unwrap());
             // The 'nbclauses' value is not needed for parsing
+            continue;
+        } else if line.starts_with("w") {
+            // Parse the weight line: w weight
+            let mut split = line.split_whitespace();
+            split.next(); // Skip the 'w' token
+            must_clause_weight = Some(split.next().unwrap().parse().unwrap());
             continue;
         } else {
             // Parse clause lines
@@ -164,11 +174,12 @@ pub fn parse_dimacs_format(input: &str) -> CNFFormula {
                 })
                 .collect();
 
-            clauses.push(CNFClause::new(literals.into()));
+            let weight = must_clause_weight; // Assign the weight to the clause
+            clauses.push(CNFClause::new(literals.into(), weight));
         }
     }
 
-    CNFFormula::new(clauses.into(), varnum)
+    CNFFormula::new(clauses.into(), varnum, must_clause_weight)
 }
 
 pub fn apply_variable_mapping(
@@ -191,11 +202,11 @@ pub fn apply_variable_mapping(
             }
         }
 
-        let mapped_clause = CNFClause::new(mapped_literals.into());
+        let mapped_clause = CNFClause::new(mapped_literals.into(), clause.weight);
         mapped_clauses.push(mapped_clause);
     }
 
-    CNFFormula::new(mapped_clauses.into(), Some(formula.varnum))
+    CNFFormula::new(mapped_clauses.into(), Some(formula.varnum), formula.must_clause_weight)
 }
 
 // Normalizes the variables of CNF function. That is, the smallest variable should be 0, and
@@ -226,6 +237,11 @@ pub fn cnf_to_dimacs_format(formula: &CNFFormula) -> String {
 
     // Add problem line: p cnf nbvar nbclauses
     dimacs_string.push_str(&format!("p cnf {varnum} {num_clauses}\n"));
+
+    // Add weight line if present
+    if let Some(weight) = formula.must_clause_weight {
+        dimacs_string.push_str(&format!("w {weight}\n"));
+    }
 
     // Add clauses
     for clause in &formula.clauses {
@@ -405,13 +421,14 @@ pub fn convert_to_cnf_formula(formula_set: &CNFFormulaSet) -> CNFFormula {
                 .cloned()
                 .collect::<Vec<_>>(),
         );
-        let clause = CNFClause::new(literals);
+        let clause = CNFClause::new(literals, None);
         clauses_array.push(clause);
     }
 
     CNFFormula {
         clauses: Array1::from(clauses_array),
         varnum: formula_set.varnum,
+        must_clause_weight: None,
     }
 }
 

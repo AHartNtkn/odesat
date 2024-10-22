@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Write};
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -62,6 +63,10 @@ pub struct SolveOpts {
     /// Optional output file for the transformed CNF formula
     #[arg(short = 'p', long)]
     pub transformed_output: Option<PathBuf>,
+
+    /// Time limit in seconds
+    #[arg(short = 'T', long)]
+    pub time_limit: Option<u64>,
 }
 
 #[derive(Args)]
@@ -112,6 +117,10 @@ pub struct BatchOpts {
     /// Learning rate
     #[arg(short = 'l', long)]
     pub learning_rate: Option<f64>,
+
+    /// Time limit in seconds
+    #[arg(short = 'T', long)]
+    pub time_limit: Option<u64>,
 }
 
 #[derive(Args)]
@@ -158,6 +167,7 @@ fn solve(solve_opts: SolveOpts) -> Result<(), Box<dyn std::error::Error>> {
         7.0
     };
     let transformed_output_path = &solve_opts.transformed_output;
+    let time_limit = solve_opts.time_limit.map(Duration::from_secs);
 
     println!("Reading CNF formula from file...");
     let cnf_string = fs::read_to_string(input_path)?;
@@ -184,14 +194,50 @@ fn solve(solve_opts: SolveOpts) -> Result<(), Box<dyn std::error::Error>> {
         xl: Array1::ones(normalized_formula.clauses.len()),
     };
 
-    let result = simulate(
-        &mut state,
-        &normalized_formula,
-        tolerance,
-        step_size,
-        step_number,
-        learning_rate,
-    );
+    let start_time = Instant::now();
+    let mut best_solution = None;
+    let mut best_score = f64::INFINITY;
+
+    while time_limit.map_or(true, |limit| start_time.elapsed() < limit) {
+        let result = simulate(
+            &mut state,
+            &normalized_formula,
+            tolerance,
+            step_size,
+            step_number,
+            learning_rate,
+        );
+
+        let score = normalized_formula
+            .clauses
+            .iter()
+            .map(|clause| {
+                clause
+                    .literals
+                    .iter()
+                    .map(|lit| {
+                        let value = if lit.is_negated {
+                            !result[lit.variable]
+                        } else {
+                            result[lit.variable]
+                        };
+                        if value { 0.0 } else { clause.weight.unwrap_or(1.0) }
+                    })
+                    .sum::<f64>()
+            })
+            .sum::<f64>();
+
+        if score < best_score {
+            best_score = score;
+            best_solution = Some(result.clone());
+        }
+
+        if score == 0.0 {
+            break;
+        }
+    }
+
+    let result = best_solution.unwrap_or_else(|| state.v.iter().map(|&value| value > 0.0).collect());
 
     println!("Mapping values...");
     let mut mapped_values = map_values_by_indices(&var_mapping, &result);
@@ -270,6 +316,7 @@ fn batch(batch_opts: BatchOpts) -> Result<(), Box<dyn std::error::Error>> {
     let step_number = batch_opts.step_number;
     let step_size = batch_opts.step_size;
     let learning_rate = batch_opts.learning_rate;
+    let time_limit = batch_opts.time_limit.map(Duration::from_secs);
 
     println!("Reading CNF formula from file...");
     let cnf_string = fs::read_to_string(input_path)?;
@@ -285,8 +332,15 @@ fn batch(batch_opts: BatchOpts) -> Result<(), Box<dyn std::error::Error>> {
     let mut rng = rand::thread_rng();
     let mut is_satisfiable = false;
     let mut mapped_values = HashMap::new();
+    let start_time = Instant::now();
+    let mut best_solution = None;
+    let mut best_score = f64::INFINITY;
 
     for i in 0..batch_size {
+        if time_limit.map_or(false, |limit| start_time.elapsed() >= limit) {
+            break;
+        }
+
         print!("\rRunning simulation {}.", i + 1);
         io::stdout().flush().unwrap(); // Flush stdout to make sure it gets printed immediately
 
@@ -313,10 +367,36 @@ fn batch(batch_opts: BatchOpts) -> Result<(), Box<dyn std::error::Error>> {
         mapped_values = map_values_by_indices(&var_mapping, &result);
         is_satisfiable = evaluate_cnf(&mut mapped_values, formula.clone());
 
+        let score = normalized_formula
+            .clauses
+            .iter()
+            .map(|clause| {
+                clause
+                    .literals
+                    .iter()
+                    .map(|lit| {
+                        let value = if lit.is_negated {
+                            !result[lit.variable]
+                        } else {
+                            result[lit.variable]
+                        };
+                        if value { 0.0 } else { clause.weight.unwrap_or(1.0) }
+                    })
+                    .sum::<f64>()
+            })
+            .sum::<f64>();
+
+        if score < best_score {
+            best_score = score;
+            best_solution = Some(result.clone());
+        }
+
         if is_satisfiable {
             break;
         }
     }
+
+    let result = best_solution.unwrap_or_else(|| state.v.iter().map(|&value| value > 0.0).collect());
 
     println!("\nChecking if solution vector satisfies formula: {is_satisfiable}");
 
