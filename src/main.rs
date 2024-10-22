@@ -3,6 +3,7 @@ use ndarray::Array1;
 use odesat::cnf::*;
 use odesat::stoch::search;
 use odesat::system::*;
+use odesat::preprocessing::{repeatedly_resolve_and_update, save_transformed_cnf};
 use rand::Rng;
 use std::collections::HashMap;
 use std::fs;
@@ -57,6 +58,10 @@ pub struct SolveOpts {
     /// Clause-to-Variable Ratio
     #[arg(short = 'r', long)]
     pub ctv_ratio: Option<f32>,
+
+    /// Optional output file for the transformed CNF formula
+    #[arg(short = 'p', long)]
+    pub transformed_output: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -152,6 +157,7 @@ fn solve(solve_opts: SolveOpts) -> Result<(), Box<dyn std::error::Error>> {
     } else {
         7.0
     };
+    let transformed_output_path = &solve_opts.transformed_output;
 
     println!("Reading CNF formula from file...");
     let cnf_string = fs::read_to_string(input_path)?;
@@ -164,6 +170,11 @@ fn solve(solve_opts: SolveOpts) -> Result<(), Box<dyn std::error::Error>> {
     let eliminated_vars = repeatedly_resolve_and_update(&mut set_formula, ctv_ratio);
     let new_formula = convert_to_cnf_formula(&set_formula);
     let (var_mapping, normalized_formula) = normalize_cnf_variables(&new_formula);
+
+    if let Some(transformed_output_path) = transformed_output_path {
+        println!("Saving transformed CNF formula to file...");
+        save_transformed_cnf(&normalized_formula, transformed_output_path.to_str().unwrap())?;
+    }
 
     println!("Simulating...");
     let mut rng = rand::thread_rng();
